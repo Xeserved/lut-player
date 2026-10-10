@@ -917,23 +917,122 @@
   }
 
   @media (max-width: 760px) {
-    .hud { left: 10px; right: 10px; }
-    .top-hud { top: 10px; }
-    .bottom-hud { bottom: 10px; width: calc(100vw - 20px); }
-    .brand-block { max-width: 62vw; }
-    .media-title { max-width: 44vw; }
+    .hud { left: 8px; right: 8px; }
+    .top-hud { top: 8px; gap: 8px; align-items: flex-start; }
+
+    /* 顶部品牌块：允许收缩，文字不换行 */
+    .brand-block {
+      flex: 1 1 auto;
+      min-width: 0;
+      max-width: none;
+      padding: 6px 9px;
+      gap: 8px;
+      border-radius: 12px;
+    }
+    .brand-mark { width: 24px; height: 24px; border-radius: 7px; }
+    .brand-mark svg { width: 13px; height: 13px; }
+    .brand-copy { min-width: 0; }
+    .brand-title { font-size: 10px; letter-spacing: 0.08em; }
+    .media-title { font-size: 11px; max-width: none; }
+
+    /* 顶部按钮：收紧 */
+    .action-block {
+      flex: 0 0 auto;
+      padding: 5px;
+      gap: 4px;
+      border-radius: 12px;
+    }
     .action-btn span { display: none; }
+    .action-btn,
+    .icon-btn,
+    .primary-btn {
+      min-height: 32px;
+      border-radius: 8px;
+      padding: 0 8px;
+    }
+    .icon-btn { width: 32px; }
+    .primary-btn { padding: 0 10px; }
+    .primary-btn span { display: none; }
+    .icon-btn svg,
+    .action-btn svg,
+    .primary-btn svg { width: 15px; height: 15px; }
+    .text-btn { min-width: 32px; padding: 0 8px; font-size: 11px; }
+
+    /* 底部 HUD：修正居中，取消 translateX */
+    .bottom-hud {
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      width: auto;
+      transform: none;
+      gap: 6px;
+    }
+
+    .seek-shell { padding: 6px 8px; gap: 6px; border-radius: 11px; }
+    .time-display { font-size: 11px; min-width: 40px; }
+
+    .control-bar { padding: 6px 8px; gap: 6px; border-radius: 12px; }
+    .control-left,
+    .control-right { gap: 3px; }
     .volume-wrap { display: none; }
-    .settings-panel { right: 10px; top: 80px; width: calc(100vw - 20px); }
-    .playlist-panel { top: 10px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
-    #subtitle-layer { bottom: 105px; max-width: 92vw; }
+    .status-pill { font-size: 10px; padding: 0 7px; min-height: 26px; gap: 5px; }
+    .status-dot { width: 5px; height: 5px; }
+
+    /* 设置面板：居中且限制高度，避免溢出 */
+    .settings-panel {
+      left: 8px;
+      right: 8px;
+      top: 58px;
+      width: auto;
+      padding: 12px;
+      border-radius: 14px;
+      max-height: calc(100dvh - 76px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .panel-title { font-size: 12px; }
+    .panel-hint { font-size: 10px; }
+    .setting-row { grid-template-columns: 72px 1fr; gap: 8px; }
+    .setting-label { font-size: 11px; }
+    .subtitle-size-value { font-size: 10px; }
+
+    /* 播放列表：四边贴合 */
+    .playlist-panel {
+      top: 8px;
+      right: 8px;
+      bottom: 8px;
+      left: 8px;
+      width: auto;
+      padding: 12px;
+      border-radius: 14px;
+    }
+
+    #subtitle-layer { bottom: 96px; max-width: 94vw; font-size: 20px; }
   }
 
+  @media (max-width: 480px) {
+    .brand-title { display: none; }
+    .media-title { font-size: 10px; }
+    .time-display { font-size: 10px; min-width: 34px; }
+    .status-pill { display: none; }
+    #subtitle-layer { font-size: 18px; }
+  }
+
+
   @media (max-height: 520px) {
-    #subtitle-layer { bottom: 92px; }
-    .top-hud { top: 8px; }
-    .bottom-hud { bottom: 8px; gap: 5px; }
-    .playlist-panel { top: 8px; bottom: 8px; }
+    #subtitle-layer { bottom: 90px; }
+    .top-hud { top: 6px; }
+    .bottom-hud { bottom: 6px; gap: 5px; }
+    .playlist-panel { top: 6px; bottom: 6px; left: 6px; right: 6px; width: auto; }
+    .settings-panel {
+      top: 52px;
+      max-height: calc(100dvh - 60px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .brand-block { padding: 5px 8px; }
+    .brand-mark { width: 22px; height: 22px; }
+    .brand-title { display: none; }
   }
 </style>
 </head>
