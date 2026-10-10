@@ -1,0 +1,3107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGL2 + MP4 内嵌字幕播放器 41号记忆版</title>
+  <style>
+  :root {
+    --bg: #090909;
+    --panel: rgba(23, 23, 23, 0.78);
+    --panel-solid: #171717;
+    --panel-strong: rgba(25, 25, 25, 0.94);
+    --line: rgba(255,255,255,0.10);
+    --line-strong: rgba(255,255,255,0.16);
+    --text: #f5f5f5;
+    --muted: rgba(255,255,255,0.58);
+    --muted-strong: rgba(255,255,255,0.75);
+    --accent: #f5f5f5;
+    --accent-text: #111111;
+    --slider: #ffffff;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  button, input, select {
+    font: inherit;
+  }
+
+  button {
+    border: 0;
+  }
+
+  #player-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: default;
+  }
+
+  #player-container.hide-cursor {
+    cursor: none;
+  }
+
+  #player-container.drag-over::after {
+    content: '松开鼠标以导入文件';
+    position: absolute;
+    inset: 18px;
+    z-index: 200;
+    display: grid;
+    place-items: center;
+    border: 2px dashed rgba(255,255,255,0.45);
+    border-radius: 22px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-size: 15px;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  #glcanvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: #000;
+  }
+
+  #subtitle-layer {
+    position: absolute;
+    bottom: 108px;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: 0.01em;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.9);
+    pointer-events: none;
+    z-index: 30;
+    max-width: min(84vw, 1200px);
+    white-space: pre-wrap;
+  }
+
+  .ui-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 220ms ease;
+    background: linear-gradient(180deg,
+      rgba(0,0,0,0.64) 0%,
+      rgba(0,0,0,0.10) 16%,
+      rgba(0,0,0,0.00) 38%,
+      rgba(0,0,0,0.00) 58%,
+      rgba(0,0,0,0.56) 100%);
+  }
+
+  .ui-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .hud {
+    position: absolute;
+    left: 18px;
+    right: 18px;
+    display: flex;
+    pointer-events: none;
+  }
+
+  .top-hud {
+    top: 16px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .bottom-hud {
+    left: 50%;
+    right: auto;
+    bottom: 16px;
+    transform: translateX(-50%);
+    width: min(1080px, calc(100vw - 36px));
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .glass {
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.09);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.28);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+  }
+
+  .brand-block,
+  .action-block,
+  .control-bar,
+  .seek-shell,
+  .settings-panel,
+  .playlist-panel,
+  .toast {
+    pointer-events: auto;
+  }
+
+  .brand-block {
+    min-width: 0;
+    max-width: min(68vw, 760px);
+    padding: 11px 14px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    background: #fff;
+    color: #111;
+  }
+
+  .brand-mark svg { width: 16px; height: 16px; }
+
+  .brand-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .brand-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .media-title {
+    font-size: 13px;
+    color: var(--muted-strong);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: min(58vw, 640px);
+  }
+
+  .action-block {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 14px;
+  }
+
+  .icon-btn,
+  .action-btn,
+  .primary-btn {
+    min-height: 38px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 12px;
+    color: var(--text);
+    background: rgba(255,255,255,0.055);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+  }
+
+  .icon-btn {
+    width: 38px;
+    padding: 0;
+  }
+
+  .text-btn {
+    width: auto;
+    min-width: 38px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .icon-btn:hover,
+  .action-btn:hover {
+    background: rgba(255,255,255,0.10);
+    border-color: var(--line);
+  }
+
+  .icon-btn:active,
+  .action-btn:active,
+  .primary-btn:active {
+    transform: translateY(1px);
+  }
+
+  .primary-btn {
+    background: #fff;
+    color: #111;
+    font-weight: 650;
+  }
+
+  .primary-btn:hover {
+    background: #ececec;
+  }
+
+  .icon-btn svg,
+  .action-btn svg,
+  .primary-btn svg {
+    width: 17px;
+    height: 17px;
+    flex: 0 0 auto;
+  }
+
+  .seek-shell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 13px;
+  }
+
+  .time-display {
+    min-width: 47px;
+    color: rgba(255,255,255,0.72);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+  }
+
+  .progress-bar {
+    flex: 1;
+    min-width: 80px;
+    height: 22px;
+    cursor: pointer;
+  }
+
+  .progress-bar::-webkit-slider-runnable-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  .progress-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: var(--slider);
+    box-shadow: 0 1px 8px rgba(0,0,0,0.35);
+  }
+
+  .progress-bar::-moz-range-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  .progress-bar::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--slider);
+  }
+
+  .control-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 15px;
+  }
+
+  .control-left,
+  .control-right {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .volume-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 7px;
+    color: var(--muted-strong);
+  }
+
+  .volume-wrap svg { width: 16px; height: 16px; }
+
+  #volume-bar {
+    width: 84px;
+    height: 20px;
+    cursor: pointer;
+  }
+
+  #volume-bar::-webkit-slider-runnable-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  #volume-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 11px;
+    height: 11px;
+    margin-top: -4px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  #volume-bar::-moz-range-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  #volume-bar::-moz-range-thumb {
+    width: 11px;
+    height: 11px;
+    border: 0;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.07);
+    color: var(--muted);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.72);
+  }
+
+  .settings-panel {
+    position: absolute;
+    right: 18px;
+    top: 86px;
+    width: min(410px, calc(100vw - 36px));
+    padding: 14px;
+    border-radius: 17px;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+    visibility: hidden;
+    transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+    z-index: 60;
+  }
+
+  .settings-panel.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 2px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .panel-title {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .panel-hint {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .settings-grid {
+    display: grid;
+    gap: 10px;
+    padding-top: 10px;
+  }
+
+  .setting-row {
+    display: grid;
+    grid-template-columns: 86px 1fr;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .setting-label {
+    color: var(--muted-strong);
+    font-size: 12px;
+  }
+
+  .setting-control {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.045);
+    color: var(--text);
+    outline: none;
+  }
+
+  .setting-control:focus {
+    border-color: var(--line-strong);
+    background: rgba(255,255,255,0.07);
+  }
+
+  .embedded-subtitle-picker {
+    position: relative;
+    min-width: 0;
+  }
+
+  .embedded-subtitle-native {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .subtitle-select-trigger {
+    width: 100%;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 10px 0 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.045);
+    color: var(--muted-strong);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  .subtitle-select-trigger:hover:not(:disabled),
+  .subtitle-select-trigger.open {
+    background: rgba(255,255,255,0.075);
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+
+  .subtitle-select-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .subtitle-select-trigger svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    color: var(--muted);
+    transition: transform 140ms ease;
+  }
+
+  .subtitle-select-trigger.open svg {
+    transform: rotate(180deg);
+  }
+
+  #embedded-subtitle-label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .embedded-subtitle-menu {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 120;
+    max-height: min(300px, 42vh);
+    overflow-y: auto;
+    padding: 5px;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 13px;
+    background: rgba(23,23,23,0.97);
+    box-shadow: 0 18px 48px rgba(0,0,0,0.42);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    opacity: 0;
+    transform: translateY(-5px) scale(0.99);
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  }
+
+  .embedded-subtitle-menu.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .embedded-subtitle-menu::-webkit-scrollbar { width: 6px; }
+  .embedded-subtitle-menu::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
+
+  .subtitle-option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.025);
+    color: var(--muted-strong);
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .subtitle-option + .subtitle-option { margin-top: 4px; }
+
+  .subtitle-option:hover {
+    background: rgba(255,255,255,0.055);
+    color: #fff;
+  }
+
+  .subtitle-option.active {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.10);
+    color: #fff;
+  }
+
+  .subtitle-option-mark {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+  }
+
+  .subtitle-option-mark svg { width: 13px; height: 13px; }
+
+  .subtitle-option-text {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+
+  .file-button {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    width: 100%;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.045);
+    color: var(--muted-strong);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .file-button:hover { background: rgba(255,255,255,0.07); }
+  .file-button input { display: none; }
+
+  .file-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sub-status {
+    padding-top: 2px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.45;
+  }
+
+  .range-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .range-line input { flex: 1; }
+  .subtitle-size-value {
+    min-width: 49px;
+    color: var(--muted-strong);
+    font-size: 11px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #subtitle-size {
+    width: 100%;
+    height: 20px;
+    cursor: pointer;
+  }
+
+  #subtitle-size::-webkit-slider-runnable-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  #subtitle-size::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  #subtitle-size::-moz-range-track {
+    height: 3px;
+    background: rgba(255,255,255,0.24);
+    border-radius: 999px;
+  }
+
+  #subtitle-size::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 0;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  .switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    flex: 0 0 auto;
+  }
+
+  .switch input { display: none; }
+
+  .switch-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: background 150ms ease;
+    cursor: pointer;
+  }
+
+  .switch-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 150ms ease;
+  }
+
+  .switch input:checked + .switch-track { background: rgba(255,255,255,0.76); }
+  .switch input:checked + .switch-track::after { transform: translateX(16px); background: #111; }
+
+  .playlist-panel {
+    position: absolute;
+    top: 16px;
+    right: 18px;
+    bottom: 16px;
+    width: min(360px, calc(100vw - 36px));
+    padding: 14px;
+    border-radius: 18px;
+    opacity: 0;
+    transform: translateX(18px);
+    visibility: hidden;
+    transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: auto;
+    z-index: 60;
+  }
+
+  .playlist-panel.open {
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .playlist-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .playlist-title-wrap { min-width: 0; }
+  .playlist-title { font-size: 14px; font-weight: 700; }
+  .playlist-count { margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+  .playlist-list {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding-right: 2px;
+  }
+
+  .playlist-list::-webkit-scrollbar { width: 6px; }
+  .playlist-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; }
+
+  .playlist-empty {
+    display: grid;
+    place-items: center;
+    min-height: 150px;
+    padding: 20px;
+    border: 1px dashed rgba(255,255,255,0.10);
+    border-radius: 13px;
+    color: var(--muted);
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .playlist-item {
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 10px;
+    border-radius: 11px;
+    border: 1px solid transparent;
+    color: var(--muted-strong);
+    background: rgba(255,255,255,0.025);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .playlist-item:hover { background: rgba(255,255,255,0.055); }
+
+  .playlist-item.active {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.10);
+    color: #fff;
+  }
+
+  .playlist-item.pending {
+    border-style: dashed;
+    border-color: rgba(255,255,255,0.14);
+    color: var(--muted);
+  }
+
+  .playlist-index {
+    color: var(--muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .playlist-name {
+    min-width: 0;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .playlist-size { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.98);
+    min-width: 160px;
+    max-width: min(76vw, 520px);
+    padding: 12px 16px;
+    border-radius: 13px;
+    background: rgba(18,18,18,0.90);
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.34);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    color: #fff;
+    font-size: 12px;
+    text-align: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+    z-index: 200;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    visibility: visible;
+  }
+
+  .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0,0,0,0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+  }
+
+  @media (max-width: 760px) {
+    .hud { left: 10px; right: 10px; }
+    .top-hud { top: 10px; }
+    .bottom-hud { bottom: 10px; width: calc(100vw - 20px); }
+    .brand-block { max-width: 62vw; }
+    .media-title { max-width: 44vw; }
+    .action-btn span { display: none; }
+    .volume-wrap { display: none; }
+    .settings-panel { right: 10px; top: 80px; width: calc(100vw - 20px); }
+    .playlist-panel { top: 10px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
+    #subtitle-layer { bottom: 105px; max-width: 92vw; }
+  }
+
+  @media (max-height: 520px) {
+    #subtitle-layer { bottom: 92px; }
+    .top-hud { top: 8px; }
+    .bottom-hud { bottom: 8px; gap: 5px; }
+    .playlist-panel { top: 8px; bottom: 8px; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="player-container">
+    <video id="video" crossorigin="anonymous" playsinline style="display:none;"></video>
+    <canvas id="glcanvas"></canvas>
+    <div id="subtitle-layer"></div>
+
+    <div id="ui-overlay" class="ui-overlay">
+      <div class="hud top-hud">
+        <div class="brand-block glass" aria-label="播放器信息">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m9 4 2 16M13 4l2 16M5 9h14M5 15h14"/></svg>
+          </div>
+          <div class="brand-copy">
+            <div class="brand-title">MovieResolve Player</div>
+            <div id="current-title" class="media-title">选择一个视频开始播放</div>
+          </div>
+        </div>
+
+        <div class="action-block glass">
+          <button id="btn-open-video" class="primary-btn" type="button" title="添加视频（可多选）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span>添加视频</span>
+          </button>
+          <button id="btn-playlist" class="action-btn" type="button" title="打开播放列表">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
+            <span>播放列表</span>
+          </button>
+          <button id="btn-settings" class="icon-btn text-btn" type="button" title="字幕与 LUT 设置" aria-label="字幕与 LUT 设置">
+            <span>设置</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="playlist-panel" class="playlist-panel glass" aria-label="播放列表">
+        <div class="playlist-head">
+          <div class="playlist-title-wrap">
+            <div class="playlist-title">播放列表</div>
+            <div id="playlist-count" class="playlist-count">0 个视频</div>
+          </div>
+          <button id="btn-close-playlist" class="icon-btn" type="button" title="关闭播放列表" aria-label="关闭播放列表">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 7 10 10M17 7 7 17"/></svg>
+          </button>
+        </div>
+        <div id="playlist-list" class="playlist-list">
+          <div id="playlist-empty" class="playlist-empty">还没有视频。<br>点击“添加视频”可以一次选择多个文件。</div>
+        </div>
+        <button id="btn-clear-playlist" class="action-btn" type="button" title="清空播放列表">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+          <span>清空列表</span>
+        </button>
+      </div>
+
+      <div id="settings-panel" class="settings-panel glass" aria-label="播放器设置">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">字幕与画面</div>
+            <div class="panel-hint">高级选项不会打扰正常播放</div>
+          </div>
+          <button id="btn-close-settings" class="icon-btn" type="button" title="关闭设置" aria-label="关闭设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 7 10 10M17 7 7 17"/></svg>
+          </button>
+        </div>
+
+        <div class="settings-grid">
+          <div class="setting-row embedded-subtitle-group">
+            <div class="setting-label">内嵌字幕</div>
+            <div id="embedded-subtitle-picker" class="embedded-subtitle-picker">
+              <button id="embedded-subtitle-trigger" class="subtitle-select-trigger" type="button" disabled aria-haspopup="listbox" aria-expanded="false" aria-label="选择内嵌字幕">
+                <span id="embedded-subtitle-label">请先选择 MP4</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div id="embedded-subtitle-menu" class="embedded-subtitle-menu" role="listbox" aria-label="内嵌字幕轨道"></div>
+              <select id="embedded-subtitle-select" class="embedded-subtitle-native" disabled aria-hidden="true">
+                <option value="">请先选择 MP4</option>
+              </select>
+            </div>
+          </div>
+          <div class="sub-status" id="subtitle-status">等待视频</div>
+
+          <div class="setting-row">
+            <div class="setting-label">外部字幕</div>
+            <label class="file-button">
+              <span id="sub-file-name" class="file-name">选择 .srt / .vtt</span>
+                            <input type="file" id="input-sub" accept=".vtt,.srt">
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">字幕字号</div>
+            <div class="range-line">
+              <input type="range" id="subtitle-size" min="16" max="72" step="1" value="24" aria-label="字幕字号">
+              <span id="subtitle-size-value" class="subtitle-size-value">24 px</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">LUT 文件</div>
+            <label class="file-button">
+              <span id="lut-file-name" class="file-name">选择 .cube</span>
+                            <input type="file" id="input-lut" accept=".cube">
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <div>
+              <div class="setting-label">应用 LUT 滤镜</div>
+              <div class="panel-hint">实时切换，不重新加载视频</div>
+            </div>
+            <label class="switch" title="应用 LUT 滤镜">
+              <input type="checkbox" id="chk-lut" checked>
+              <span class="switch-track"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud bottom-hud">
+        <div class="seek-shell glass">
+          <span id="txt-current-time" class="time-display">00:00</span>
+          <input type="range" id="seek-bar" class="progress-bar" value="0" min="0" max="100" step="0.1" aria-label="播放进度">
+          <span id="txt-duration" class="time-display">00:00</span>
+        </div>
+
+        <div class="control-bar glass">
+          <div class="control-left">
+            <button id="btn-prev" class="icon-btn" type="button" title="上一个" aria-label="上一个视频">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 4 12l7 7M5 12h15"/></svg>
+            </button>
+            <button id="btn-play" class="primary-btn" type="button" title="播放/暂停" aria-label="播放或暂停">
+              <svg id="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></svg>
+              <span class="sr-only">播放</span>
+            </button>
+            <button id="btn-next" class="icon-btn" type="button" title="下一个" aria-label="下一个视频">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m13 5 7 7-7 7M4 12h16"/></svg>
+            </button>
+            <div class="volume-wrap" title="音量">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9h4l5-4v14l-5-4H4V9Z"/><path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10"/></svg>
+              <input type="range" id="volume-bar" min="0" max="1" step="0.05" value="1" aria-label="音量">
+            </div>
+          </div>
+
+          <div class="control-right">
+            <div id="player-status" class="status-pill"><span class="status-dot"></span><span>就绪</span></div>
+            <button id="btn-hide-ui" class="icon-btn text-btn" type="button" title="隐藏控制界面" aria-label="隐藏控制界面">
+              <span>隐藏</span>
+            </button>
+            <button id="btn-enter-fullscreen" class="icon-btn" type="button" title="进入全屏" aria-label="进入全屏">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M20 16v4h-4"/></svg>
+            </button>
+            <button id="btn-exit-fullscreen" class="icon-btn" type="button" title="退出全屏" aria-label="退出全屏" style="display:none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M20 15h-5v5"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <input id="input-video" class="sr-only" type="file" accept="video/*,.mp4,.m4v,.m2ts,.webm,.mov,.mkv" multiple>
+  </div>
+  <script>
+    const container = document.getElementById('player-container');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('glcanvas');
+    const uiOverlay = document.getElementById('ui-overlay');
+    const subtitleLayer = document.getElementById('subtitle-layer');
+
+    const inputVideo = document.getElementById('input-video');
+    const inputSub = document.getElementById('input-sub');
+    const embeddedSubtitleSelect = document.getElementById('embedded-subtitle-select');
+    const embeddedSubtitlePicker = document.getElementById('embedded-subtitle-picker');
+    const embeddedSubtitleTrigger = document.getElementById('embedded-subtitle-trigger');
+    const embeddedSubtitleLabel = document.getElementById('embedded-subtitle-label');
+    const embeddedSubtitleMenu = document.getElementById('embedded-subtitle-menu');
+    const subtitleStatus = document.getElementById('subtitle-status');
+    const subtitleSizeInput = document.getElementById('subtitle-size');
+    const subtitleSizeValue = document.getElementById('subtitle-size-value');
+    const inputLut = document.getElementById('input-lut');
+    const chkLut = document.getElementById('chk-lut');
+
+    const btnPlay = document.getElementById('btn-play');
+    const playIcon = document.getElementById('play-icon');
+    const seekBar = document.getElementById('seek-bar');
+    const volumeBar = document.getElementById('volume-bar');
+    const txtCurrentTime = document.getElementById('txt-current-time');
+    const txtDuration = document.getElementById('txt-duration');
+    const currentTitle = document.getElementById('current-title');
+    const playerStatus = document.getElementById('player-status');
+    const playerStatusText = playerStatus.querySelector('span:last-child');
+
+    const btnOpenVideo = document.getElementById('btn-open-video');
+    const btnPlaylist = document.getElementById('btn-playlist');
+    const btnClosePlaylist = document.getElementById('btn-close-playlist');
+    const btnClearPlaylist = document.getElementById('btn-clear-playlist');
+    const playlistPanel = document.getElementById('playlist-panel');
+    const playlistList = document.getElementById('playlist-list');
+    const playlistCount = document.getElementById('playlist-count');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+    const btnSettings = document.getElementById('btn-settings');
+    const btnCloseSettings = document.getElementById('btn-close-settings');
+    const settingsPanel = document.getElementById('settings-panel');
+    const subFileName = document.getElementById('sub-file-name');
+    const lutFileName = document.getElementById('lut-file-name');
+    const toast = document.getElementById('toast');
+
+    const btnHideUi = document.getElementById('btn-hide-ui');
+    const btnEnterFullscreen = document.getElementById('btn-enter-fullscreen');
+    const btnExitFullscreen = document.getElementById('btn-exit-fullscreen');
+
+    // ============ WebGL / LUT 状态 ============
+    let gl, program;
+    let videoTexture, lutTexture;
+    let isLutLoaded = false;
+    let lutSize = 0;
+
+    // ============ 字幕状态 ============
+    let subtitles = [];
+    let embeddedSubtitleTracks = [];
+    let activeSubtitleSource = 'none';
+    let activeEmbeddedTrackId = null;
+    let activeSubtitleFileName = '';
+    let videoObjectUrl = null;
+    let mp4ParseGeneration = 0;
+
+    // ============ 播放列表状态 ============
+    let playlist = [];
+    let currentPlaylistIndex = -1;
+    let toastTimer = null;
+
+    // ============ 持久化状态 ============
+    const DEFAULT_SUBTITLE_SIZE = 24;
+    const QUICK_STATE_KEY = 'movieresolve_quick_state_v1';
+    const IDB_NAME = 'movieresolve_player';
+    const IDB_STORE = 'blobs';
+
+    let currentLutText = '';
+    let currentLutFileName = '';
+    let externalSubtitleData = null;   // { name, text }
+
+    // 待恢复的进度
+    let restoreKey = null;             // 上次播放文件的 key
+    let restoreTime = 0;               // 上次播放的时间戳
+    let pendingSeekTime = 0;           // 待跳转时间
+    let embeddedRestoreTrackId = null; // 待恢复的内嵌字幕轨 id
+
+    let lastSaveAt = 0;
+    let saveStateTimer = null;
+    let uiHideTimer = null;
+    let isManualUiHidden = false;
+
+    // ============ 工具函数 ============
+    function fileKey(file) {
+      return `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+    }
+
+    function isVideoFile(file) {
+      if (!file) return false;
+      return (file.type && file.type.startsWith('video/')) ||
+        /\.(mp4|m4v|m2ts|webm|mov|mkv)$/i.test(file.name || '');
+    }
+
+    function isSubtitleFile(file) {
+      if (!file) return false;
+      return /\.(srt|vtt)$/i.test(file.name || '');
+    }
+
+    function isLutFile(file) {
+      if (!file) return false;
+      return /\.cube$/i.test(file.name || '');
+    }
+
+    // ============ IndexedDB 简易封装 ============
+    function openIDB() {
+      return new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) {
+          reject(new Error('IndexedDB 不可用'));
+          return;
+        }
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) {
+            db.createObjectStore(IDB_STORE, { keyPath: 'key' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function idbPut(key, data) {
+      try {
+        const db = await openIDB();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put({ key, data });
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+      } catch (err) {
+        console.warn('IndexedDB 写入失败', key, err);
+      }
+    }
+
+    async function idbGet(key) {
+      try {
+        const db = await openIDB();
+        const value = await new Promise((resolve, reject) => {
+          const tx = db.transaction(IDB_STORE, 'readonly');
+          const req = tx.objectStore(IDB_STORE).get(key);
+          req.onsuccess = () => resolve(req.result ? req.result.data : null);
+          req.onerror = () => reject(req.error);
+        });
+        db.close();
+        return value;
+      } catch (err) {
+        console.warn('IndexedDB 读取失败', key, err);
+        return null;
+      }
+    }
+
+    // ============ 持久化：快速状态（localStorage） ============
+    function saveQuickState() {
+      try {
+        const currentFile = (currentPlaylistIndex >= 0 && playlist[currentPlaylistIndex] && !playlist[currentPlaylistIndex].__meta)
+          ? playlist[currentPlaylistIndex]
+          : null;
+
+        const playlistMeta = playlist.map(item => ({
+          name: item.name || '',
+          size: item.size || 0,
+          lastModified: item.lastModified || 0,
+          type: item.type || ''
+        }));
+
+        let currentKey = null;
+        let currentTime = video.currentTime || 0;
+        if (currentFile) {
+          currentKey = fileKey(currentFile);
+        } else if (restoreKey) {
+          currentKey = restoreKey;
+          currentTime = restoreTime;
+        }
+
+        const state = {
+          v: 1,
+          subtitleSize: Number(subtitleSizeInput.value) || DEFAULT_SUBTITLE_SIZE,
+          lutEnabled: chkLut.checked,
+          lutFileName: currentLutFileName || '',
+          activeSubtitleSource: activeSubtitleSource,
+          embeddedTrackId: activeEmbeddedTrackId,
+          playlistMeta,
+          currentIndex: currentPlaylistIndex,
+          currentKey,
+          currentTime,
+          volume: video.volume,
+          muted: video.muted
+        };
+
+        localStorage.setItem(QUICK_STATE_KEY, JSON.stringify(state));
+      } catch (err) {
+        console.warn('localStorage 写入失败', err);
+      }
+    }
+
+    function saveStateThrottled() {
+      const now = Date.now();
+      if (now - lastSaveAt > 1500) {
+        lastSaveAt = now;
+        saveQuickState();
+      } else {
+        clearTimeout(saveStateTimer);
+        saveStateTimer = setTimeout(() => {
+          lastSaveAt = Date.now();
+          saveQuickState();
+        }, 1500);
+      }
+    }
+
+    function saveStateNow() {
+      clearTimeout(saveStateTimer);
+      saveQuickState();
+    }
+
+    // ============ 持久化：资源（IndexedDB） ============
+    async function saveAssets() {
+      await idbPut('lut', currentLutText ? { name: currentLutFileName, text: currentLutText } : null);
+      await idbPut('subtitle', externalSubtitleData || null);
+    }
+
+    // ============ 恢复状态 ============
+    async function restoreState() {
+      let state = null;
+      try {
+        state = JSON.parse(localStorage.getItem(QUICK_STATE_KEY) || 'null');
+      } catch (err) {
+        console.warn('读取本地状态失败', err);
+      }
+
+      // 从 IndexedDB 读 LUT 与外部字幕
+      const lutData = await idbGet('lut');
+      const subData = await idbGet('subtitle');
+
+      if (state) {
+        // 字幕字号
+        if (state.subtitleSize) setSubtitleFontSize(state.subtitleSize);
+
+        // 音量
+        if (typeof state.volume === 'number') {
+          video.volume = Math.min(1, Math.max(0, state.volume));
+          volumeBar.value = String(video.volume);
+        }
+        if (typeof state.muted === 'boolean') {
+          video.muted = state.muted;
+        }
+
+        // LUT 开关
+        if (typeof state.lutEnabled === 'boolean') {
+          chkLut.checked = state.lutEnabled;
+        }
+
+        // 播放列表元数据
+        if (Array.isArray(state.playlistMeta) && state.playlistMeta.length) {
+          playlist = state.playlistMeta.map(m => ({
+            __meta: true,
+            name: m.name,
+            size: m.size,
+            lastModified: m.lastModified,
+            type: m.type || ''
+          }));
+          currentPlaylistIndex = -1;
+
+          if (state.currentIndex >= 0 && state.currentIndex < playlist.length) {
+            const meta = playlist[state.currentIndex];
+            currentTitle.textContent = `${meta.name}（待重新选择文件）`;
+          }
+          setPlayerStatus('待恢复');
+        }
+
+        // 上次播放的位置
+        if (state.currentKey) {
+          restoreKey = state.currentKey;
+          restoreTime = Number(state.currentTime) || 0;
+        }
+      }
+
+      // LUT 恢复
+      if (lutData && lutData.text) {
+        try {
+          currentLutText = lutData.text;
+          currentLutFileName = lutData.name || '已恢复 LUT';
+          lutFileName.textContent = currentLutFileName;
+          parseAndApplyCubeLUT(currentLutText);
+        } catch (err) {
+          console.warn('恢复 LUT 失败', err);
+        }
+      }
+
+      // 外部字幕恢复
+      if (subData && subData.text && state && state.activeSubtitleSource === 'external') {
+        externalSubtitleData = subData;
+        subFileName.textContent = subData.name || '已恢复外部字幕';
+        parseSRTorVTT(subData.text);
+        activeSubtitleSource = 'external';
+        activeSubtitleFileName = subData.name || '';
+        subtitleStatus.textContent = `外部字幕（已恢复）：${activeSubtitleFileName}`;
+        updateSubtitles();
+      }
+
+      // 内嵌字幕待恢复
+      if (state && state.activeSubtitleSource === 'embedded' && state.embeddedTrackId != null) {
+        embeddedRestoreTrackId = state.embeddedTrackId;
+      }
+    }
+
+    // ============ 字幕字号 ============
+    function setSubtitleFontSize(size) {
+      const numericSize = Number(size);
+      const safeSize = Number.isFinite(numericSize)
+        ? Math.min(72, Math.max(16, Math.round(numericSize)))
+        : DEFAULT_SUBTITLE_SIZE;
+      subtitleLayer.style.fontSize = `${safeSize}px`;
+      subtitleSizeInput.value = String(safeSize);
+      subtitleSizeValue.textContent = `${safeSize} px`;
+    }
+
+    // ==========================================
+    // WebGL 2.0 着色器与渲染核心
+    // ==========================================
+    const vsSource = `#version 300 es
+      in vec2 a_position;
+      in vec2 a_texCoord;
+      out vec2 v_texCoord;
+      void main() {
+        gl_Position = vec4(a_position, 0.0, 1.0);
+        v_texCoord = vec2(a_texCoord.x, 1.0 - a_texCoord.y);
+      }
+    `;
+
+    const fsSource = `#version 300 es
+      precision highp float;
+      precision highp sampler3D;
+
+      in vec2 v_texCoord;
+      out vec4 fragColor;
+
+      uniform sampler2D u_videoTexture;
+      uniform sampler3D u_lutTexture;
+      uniform bool u_lutEnabled;
+      uniform float u_lutSize;
+
+      void main() {
+        vec4 color = texture(u_videoTexture, v_texCoord);
+
+        if (u_lutEnabled && u_lutSize > 0.0) {
+          vec3 scale = vec3((u_lutSize - 1.0) / u_lutSize);
+          vec3 offset = vec3(0.5 / u_lutSize);
+          vec3 lutCoord = color.rgb * scale + offset;
+
+          vec3 lutColor = texture(u_lutTexture, lutCoord).rgb;
+          fragColor = vec4(lutColor, color.a);
+        } else {
+          fragColor = color;
+        }
+      }
+    `;
+
+    function initWebGL() {
+      gl = canvas.getContext('webgl2');
+      if (!gl) {
+        alert('您的浏览器不支持 WebGL 2.0，无法渲染 3D LUT。');
+        return;
+      }
+
+      const createShader = (gl, type, source) => {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(shader));
+          gl.deleteShader(shader);
+          return null;
+        }
+        return shader;
+      };
+
+      const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
+      const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+      program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(program));
+        return;
+      }
+
+      gl.useProgram(program);
+
+      const positionBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1,  1, -1, -1,  1,
+        -1,  1,  1, -1,  1,  1,
+      ]), gl.STATIC_DRAW);
+
+      const aPositionLocation = gl.getAttribLocation(program, 'a_position');
+      gl.enableVertexAttribArray(aPositionLocation);
+      gl.vertexAttribPointer(aPositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+      const texCoordBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        0, 0,  1, 0,  0, 1,
+        0, 1,  1, 0,  1, 1,
+      ]), gl.STATIC_DRAW);
+
+      const aTexCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+      gl.enableVertexAttribArray(aTexCoordLocation);
+      gl.vertexAttribPointer(aTexCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+      videoTexture = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+      gl.uniform1i(gl.getUniformLocation(program, 'u_videoTexture'), 0);
+      gl.uniform1i(gl.getUniformLocation(program, 'u_lutTexture'), 1);
+
+      createDummyLutTexture();
+    }
+
+    function createDummyLutTexture() {
+      lutTexture = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_3D, lutTexture);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0,0,0,255]));
+    }
+
+    // ==========================================
+    // .cube LUT 解析
+    // ==========================================
+    function parseAndApplyCubeLUT(cubeText) {
+      const lines = cubeText.split(/\r?\n/);
+      let size = 0;
+      const rgbValues = [];
+
+      for (let line of lines) {
+        line = line.trim();
+        if (!line || line.startsWith('#')) continue;
+
+        if (line.startsWith('LUT_3D_SIZE')) {
+          const parts = line.split(/\s+/);
+          size = parseInt(parts[1], 10);
+          continue;
+        }
+
+        if (line.startsWith('TITLE') || line.startsWith('DOMAIN_') || line.startsWith('LUT_1D_SIZE')) {
+          continue;
+        }
+
+        const parts = line.split(/\s+/);
+        if (parts.length === 3) {
+          const r = parseFloat(parts[0]);
+          const g = parseFloat(parts[1]);
+          const b = parseFloat(parts[2]);
+          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+            rgbValues.push(r, g, b);
+          }
+        }
+      }
+
+      if (size === 0 || rgbValues.length !== size * size * size * 3) {
+        alert(`LUT 文件解析失败：期望数据点 ${size * size * size * 3}，实际解析 ${rgbValues.length}`);
+        return;
+      }
+
+      lutSize = size;
+      const textureData = new Uint8Array(size * size * size * 4);
+      let srcIdx = 0;
+      let dstIdx = 0;
+
+      for (let i = 0; i < size * size * size; i++) {
+        textureData[dstIdx]     = Math.min(255, Math.max(0, Math.round(rgbValues[srcIdx] * 255)));
+        textureData[dstIdx + 1] = Math.min(255, Math.max(0, Math.round(rgbValues[srcIdx + 1] * 255)));
+        textureData[dstIdx + 2] = Math.min(255, Math.max(0, Math.round(rgbValues[srcIdx + 2] * 255)));
+        textureData[dstIdx + 3] = 255;
+        srcIdx += 3;
+        dstIdx += 4;
+      }
+
+      gl.activeTexture(gl.TEXTURE1);
+      if (lutTexture) gl.deleteTexture(lutTexture);
+      lutTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_3D, lutTexture);
+
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, size, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, textureData);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+
+      isLutLoaded = true;
+      console.log(`LUT 载入成功: 维度 ${size}x${size}x${size}`);
+    }
+
+    // ==========================================
+    // 渲染循环
+    // ==========================================
+    function render() {
+      if (video.readyState >= video.HAVE_CURRENT_DATA) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+
+        gl.uniform1i(gl.getUniformLocation(program, 'u_lutEnabled'), chkLut.checked && isLutLoaded);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_lutSize'), lutSize);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        updateSubtitles();
+      }
+      requestAnimationFrame(render);
+    }
+
+    // ==========================================
+    // UI 显示与隐藏
+    // ==========================================
+    function setPlayerStatus(text) {
+      playerStatusText.textContent = text;
+    }
+
+    function showToast(message, duration = 1800) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    function showUI() {
+      uiOverlay.classList.remove('hidden');
+      container.classList.remove('hide-cursor');
+      isManualUiHidden = false;
+
+      clearTimeout(uiHideTimer);
+      if (!video.paused && !playlistPanel.classList.contains('open') && !settingsPanel.classList.contains('open')) {
+        uiHideTimer = setTimeout(() => hideUI(), 3000);
+      }
+    }
+
+    function hideUI() {
+      uiOverlay.classList.add('hidden');
+      container.classList.add('hide-cursor');
+      isManualUiHidden = true;
+      settingsPanel.classList.remove('open');
+      playlistPanel.classList.remove('open');
+    }
+
+    function toggleSettings(force) {
+      const open = typeof force === 'boolean' ? force : !settingsPanel.classList.contains('open');
+      settingsPanel.classList.toggle('open', open);
+      if (open) playlistPanel.classList.remove('open');
+      if (open) showUI();
+    }
+
+    function togglePlaylist(force) {
+      const open = typeof force === 'boolean' ? force : !playlistPanel.classList.contains('open');
+      playlistPanel.classList.toggle('open', open);
+      if (open) settingsPanel.classList.remove('open');
+      if (open) showUI();
+    }
+
+    container.addEventListener('mousemove', () => showUI());
+
+    btnHideUi.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideUI();
+    });
+
+    btnOpenVideo.addEventListener('click', (e) => {
+      e.stopPropagation();
+      inputVideo.click();
+    });
+
+    btnPlaylist.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePlaylist();
+    });
+
+    btnClosePlaylist.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePlaylist(false);
+    });
+
+    btnSettings.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSettings();
+    });
+
+    btnCloseSettings.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSettings(false);
+    });
+
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (settingsPanel.classList.contains('open') && !settingsPanel.contains(target) && target !== btnSettings) {
+        toggleSettings(false);
+      }
+      if (playlistPanel.classList.contains('open') && !playlistPanel.contains(target) && target !== btnPlaylist) {
+        togglePlaylist(false);
+      }
+    });
+
+    btnEnterFullscreen.addEventListener('click', async () => {
+      try {
+        if (container.requestFullscreen) await container.requestFullscreen();
+        else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
+      } catch (err) {
+        console.error('进入全屏失败:', err);
+        showToast('无法进入全屏');
+      }
+    });
+
+    btnExitFullscreen.addEventListener('click', async () => {
+      try {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      } catch (err) {
+        console.error('退出全屏失败:', err);
+      }
+    });
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    function handleFullscreenChange() {
+      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      btnEnterFullscreen.style.display = isFullscreen ? 'none' : 'inline-flex';
+      btnExitFullscreen.style.display = isFullscreen ? 'inline-flex' : 'none';
+      if (isFullscreen) showUI();
+    }
+
+    // ==========================================
+    // 字幕解析与同步
+    // ==========================================
+    function parseSRTorVTT(text) {
+      subtitles = [];
+      const normalized = String(text || '').replace(/^\uFEFF/, '');
+      const regex = /(?:(\d+)\r?\n)?(\d{2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[.,]\d{3})(?:[^\r\n]*)\r?\n([\s\S]*?)(?=\r?\n\r?\n|\r?\n*$)/g;
+      let match;
+      while ((match = regex.exec(normalized)) !== null) {
+        subtitles.push({
+          start: parseTimestamp(match[2]),
+          end: parseTimestamp(match[3]),
+          text: sanitizeSubtitleText(match[4]).trim()
+        });
+      }
+      subtitles.sort((a, b) => a.start - b.start);
+    }
+
+    function parseTimestamp(str) {
+      const p = str.replace(',', '.').split(':');
+      return parseFloat(p[0]) * 3600 + parseFloat(p[1]) * 60 + parseFloat(p[2]);
+    }
+
+    function updateSubtitles() {
+      if (activeSubtitleSource === 'none' || !subtitles.length) {
+        subtitleLayer.textContent = '';
+        return;
+      }
+      const t = video.currentTime;
+      const currentSub = findCueAtTime(subtitles, t);
+      subtitleLayer.textContent = currentSub ? currentSub.text : '';
+    }
+
+    function findCueAtTime(cues, time) {
+      let lo = 0;
+      let hi = cues.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const cue = cues[mid];
+        if (time < cue.start) hi = mid - 1;
+        else if (time > cue.end) lo = mid + 1;
+        else return cue;
+      }
+      return null;
+    }
+
+    function setSubtitleCues(cues, source, label) {
+      subtitles = Array.isArray(cues) ? cues.slice().sort((a, b) => a.start - b.start) : [];
+      activeSubtitleSource = source;
+      subtitleStatus.textContent = label || (subtitles.length ? `已载入 ${subtitles.length} 条字幕` : '无字幕');
+      updateSubtitles();
+    }
+
+    // ==========================================
+    // MP4 内嵌文本字幕解析
+    // ==========================================
+    function closeEmbeddedSubtitleMenu() {
+      embeddedSubtitleMenu.classList.remove('open');
+      embeddedSubtitleTrigger.classList.remove('open');
+      embeddedSubtitleTrigger.setAttribute('aria-expanded', 'false');
+    }
+
+    function syncEmbeddedSubtitleMenu() {
+      const selected = embeddedSubtitleSelect.options[embeddedSubtitleSelect.selectedIndex];
+      embeddedSubtitleLabel.textContent = selected ? selected.textContent : '';
+      embeddedSubtitleTrigger.disabled = embeddedSubtitleSelect.disabled;
+
+      embeddedSubtitleMenu.innerHTML = '';
+      for (const option of embeddedSubtitleSelect.options) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'subtitle-option' + (option.value === embeddedSubtitleSelect.value ? ' active' : '');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', option.value === embeddedSubtitleSelect.value ? 'true' : 'false');
+
+        const mark = document.createElement('span');
+        mark.className = 'subtitle-option-mark';
+        if (option.value === embeddedSubtitleSelect.value) {
+          mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"></path></svg>';
+        }
+
+        const text = document.createElement('span');
+        text.className = 'subtitle-option-text';
+        text.textContent = option.textContent;
+
+        item.append(mark, text);
+        item.addEventListener('click', (event) => {
+          event.stopPropagation();
+          embeddedSubtitleSelect.value = option.value;
+          embeddedSubtitleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          closeEmbeddedSubtitleMenu();
+        });
+        embeddedSubtitleMenu.appendChild(item);
+      }
+    }
+
+    function toggleEmbeddedSubtitleMenu() {
+      if (embeddedSubtitleTrigger.disabled) return;
+      const willOpen = !embeddedSubtitleMenu.classList.contains('open');
+      if (willOpen) {
+        syncEmbeddedSubtitleMenu();
+        embeddedSubtitleMenu.classList.add('open');
+        embeddedSubtitleTrigger.classList.add('open');
+        embeddedSubtitleTrigger.setAttribute('aria-expanded', 'true');
+      } else {
+        closeEmbeddedSubtitleMenu();
+      }
+    }
+
+    function resetEmbeddedSubtitleSelect(placeholder) {
+      embeddedSubtitleSelect.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = placeholder;
+      embeddedSubtitleSelect.appendChild(opt);
+      embeddedSubtitleSelect.disabled = true;
+      closeEmbeddedSubtitleMenu();
+      syncEmbeddedSubtitleMenu();
+    }
+
+    function formatLanguage(code) {
+      const map = {
+        eng: 'English', chi: '简体/中文', zho: '中文', jpn: '日本語', kor: '한국어',
+        spa: 'Español', fra: 'Français', fre: 'Français', deu: 'Deutsch', ger: 'Deutsch',
+        ita: 'Italiano', rus: 'Русский', por: 'Português', bul: 'Български',
+        cze: 'Čeština', dan: 'Dansk', fin: 'Suomi', hrv: 'Hrvatski', hun: 'Magyar',
+        mac: 'Македонски', nob: 'Norsk', dut: 'Nederlands', pol: 'Polski',
+        rum: 'Română', slv: 'Slovenščina', srp: 'Српски', swe: 'Svenska', und: '未知语言'
+      };
+      return code ? (map[code] ? `${map[code]} (${code})` : code) : '未知语言';
+    }
+
+    function isSupportedSubtitleEntry(entryType) {
+      const t = String(entryType || '').toLowerCase();
+      return t === 'tx3g' || t === 'wvtt';
+    }
+
+    function readU32(view, p) { return view.getUint32(p, false); }
+    function readI32(view, p) { return view.getInt32(p, false); }
+    function readU16(view, p) { return view.getUint16(p, false); }
+    function readI16(view, p) { return view.getInt16(p, false); }
+    function readI64AsNumber(view, p) {
+      const hi = view.getUint32(p, false);
+      const lo = view.getUint32(p + 4, false);
+      return hi * 4294967296 + lo;
+    }
+
+    function fourCC(view, p) {
+      return String.fromCharCode(view.getUint8(p), view.getUint8(p + 1), view.getUint8(p + 2), view.getUint8(p + 3));
+    }
+
+    function parseBoxHeader(view, offset, end) {
+      if (offset + 8 > end) return null;
+      let size = readU32(view, offset);
+      const type = fourCC(view, offset + 4);
+      let header = 8;
+      if (size === 1) {
+        if (offset + 16 > end) return null;
+        size = readI64AsNumber(view, offset + 8);
+        header = 16;
+      } else if (size === 0) {
+        size = end - offset;
+      }
+      if (!Number.isFinite(size) || size < header || offset + size > end) return null;
+      return { offset, size, type, header, dataStart: offset + header, end: offset + size };
+    }
+
+    function listChildBoxes(view, start, end) {
+      const boxes = [];
+      let p = start;
+      while (p + 8 <= end) {
+        const box = parseBoxHeader(view, p, end);
+        if (!box) break;
+        boxes.push(box);
+        p = box.end;
+      }
+      return boxes;
+    }
+
+    function findChild(view, parent, type) {
+      return listChildBoxes(view, parent.dataStart, parent.end).find(b => b.type === type) || null;
+    }
+
+    function findChildren(view, parent, type) {
+      return listChildBoxes(view, parent.dataStart, parent.end).filter(b => b.type === type);
+    }
+
+    function readFullBoxVersionFlags(view, box) {
+      return {
+        version: view.getUint8(box.dataStart),
+        flags: (view.getUint8(box.dataStart + 1) << 16) | (view.getUint8(box.dataStart + 2) << 8) | view.getUint8(box.dataStart + 3)
+      };
+    }
+
+    function decodeMdhdLanguage(view, box) {
+      const { version } = readFullBoxVersionFlags(view, box);
+      let p = box.dataStart + 4;
+      p += version === 1 ? 16 : 8;
+      p += 4;
+      if (version === 1) p += 8;
+      else p += 4;
+      if (p + 2 > box.end) return 'und';
+      const packed = readU16(view, p);
+      const a = ((packed >> 10) & 0x1F) + 0x60;
+      const b = ((packed >> 5) & 0x1F) + 0x60;
+      const c = (packed & 0x1F) + 0x60;
+      const lang = String.fromCharCode(a, b, c);
+      return /^[a-z]{3}$/.test(lang) ? lang : 'und';
+    }
+
+    function readMvhdTimescale(view, box) {
+      const { version } = readFullBoxVersionFlags(view, box);
+      let p = box.dataStart + 4;
+      p += version === 1 ? 16 : 8;
+      return readU32(view, p);
+    }
+
+    function readStsdEntryType(view, stsd) {
+      const p0 = stsd.dataStart + 8;
+      const entryCount = readU32(view, stsd.dataStart + 4);
+      const entries = [];
+      let p = p0;
+      for (let i = 0; i < entryCount && p + 8 <= stsd.end; i++) {
+        const size = readU32(view, p);
+        const type = fourCC(view, p + 4);
+        if (size < 8 || p + size > stsd.end) break;
+        entries.push({ type, offset: p, size });
+        p += size;
+      }
+      return entries;
+    }
+
+    function parseStts(view, box, sampleCount) {
+      const entryCount = readU32(view, box.dataStart + 4);
+      let p = box.dataStart + 8;
+      const dts = new Array(sampleCount);
+      const durations = new Array(sampleCount);
+      let sampleIndex = 0;
+      let time = 0;
+      for (let i = 0; i < entryCount; i++) {
+        const count = readU32(view, p); const delta = readU32(view, p + 4); p += 8;
+        for (let j = 0; j < count && sampleIndex < sampleCount; j++) {
+          dts[sampleIndex] = time;
+          durations[sampleIndex] = delta;
+          time += delta;
+          sampleIndex++;
+        }
+      }
+      return { dts, durations, totalDuration: time };
+    }
+
+    function parseCtts(view, box, sampleCount) {
+      const { version } = readFullBoxVersionFlags(view, box);
+      const entryCount = readU32(view, box.dataStart + 4);
+      let p = box.dataStart + 8;
+      const offsets = new Array(sampleCount).fill(0);
+      let sampleIndex = 0;
+      for (let i = 0; i < entryCount; i++) {
+        const count = readU32(view, p); const raw = readU32(view, p + 4); p += 8;
+        const offset = version === 1 ? (raw | 0) : raw;
+        for (let j = 0; j < count && sampleIndex < sampleCount; j++) offsets[sampleIndex++] = offset;
+      }
+      return offsets;
+    }
+
+    function parseStsz(view, box) {
+      const sampleSize = readU32(view, box.dataStart + 4);
+      const sampleCount = readU32(view, box.dataStart + 8);
+      const sizes = new Array(sampleCount);
+      if (sampleSize !== 0) {
+        sizes.fill(sampleSize);
+      } else {
+        let p = box.dataStart + 12;
+        for (let i = 0; i < sampleCount; i++, p += 4) sizes[i] = readU32(view, p);
+      }
+      return { sampleSize, sampleCount, sizes };
+    }
+
+    function parseChunkOffsets(view, box) {
+      const count = readU32(view, box.dataStart + 4);
+      let p = box.dataStart + 8;
+      const offsets = new Array(count);
+      for (let i = 0; i < count; i++, p += box.type === 'co64' ? 8 : 4) {
+        offsets[i] = box.type === 'co64' ? readI64AsNumber(view, p) : readU32(view, p);
+      }
+      return offsets;
+    }
+
+    function parseStsc(view, box) {
+      const count = readU32(view, box.dataStart + 4);
+      let p = box.dataStart + 8;
+      const entries = [];
+      for (let i = 0; i < count; i++, p += 12) {
+        entries.push({
+          firstChunk: readU32(view, p),
+          samplesPerChunk: readU32(view, p + 4),
+          sampleDescriptionIndex: readU32(view, p + 8)
+        });
+      }
+      return entries;
+    }
+
+    function buildSampleOffsets(stscEntries, chunkOffsets, sampleSizes) {
+      const offsets = new Array(sampleSizes.length);
+      let sampleIndex = 0;
+      for (let chunkIndex = 1; chunkIndex <= chunkOffsets.length && sampleIndex < sampleSizes.length; chunkIndex++) {
+        let entry = null;
+        for (let i = stscEntries.length - 1; i >= 0; i--) {
+          if (chunkIndex >= stscEntries[i].firstChunk) { entry = stscEntries[i]; break; }
+        }
+        if (!entry) break;
+        let within = chunkOffsets[chunkIndex - 1];
+        for (let j = 0; j < entry.samplesPerChunk && sampleIndex < sampleSizes.length; j++) {
+          offsets[sampleIndex] = within;
+          within += sampleSizes[sampleIndex];
+          sampleIndex++;
+        }
+      }
+      return offsets;
+    }
+
+    function parseTrackEdits(view, trak, trackTimescale, movieTimescale) {
+      const edts = findChild(view, trak, 'edts');
+      const elst = edts ? findChild(view, edts, 'elst') : null;
+      if (!elst) return null;
+      const { version } = readFullBoxVersionFlags(view, elst);
+      const entryCount = readU32(view, elst.dataStart + 4);
+      let p = elst.dataStart + 8;
+      const edits = [];
+      let movieCursor = 0;
+      for (let i = 0; i < entryCount; i++) {
+        let segmentDuration, mediaTime, rateInteger, rateFraction;
+        if (version === 1) {
+          segmentDuration = readI64AsNumber(view, p);
+          mediaTime = Number(BigInt.asIntN(64, (BigInt(view.getUint32(p + 8)) << 32n) | BigInt(view.getUint32(p + 12))));
+          p += 16;
+        } else {
+          segmentDuration = readU32(view, p); mediaTime = readI32(view, p + 4); p += 8;
+        }
+        rateInteger = readI16(view, p); rateFraction = readI16(view, p + 2); p += 4;
+        edits.push({ segmentDuration, mediaTime, rate: rateInteger + rateFraction / 65536, movieStart: movieCursor });
+        movieCursor += segmentDuration;
+      }
+      return { edits, movieTimescale, trackTimescale };
+    }
+
+    function mapMediaTimeToMovieSeconds(mediaTime, editInfo) {
+      if (!editInfo || !editInfo.edits.length) return mediaTime / editInfo.trackTimescale;
+      for (const edit of editInfo.edits) {
+        const segmentMovieDuration = edit.segmentDuration;
+        if (edit.mediaTime === -1) continue;
+        const mediaDuration = segmentMovieDuration * edit.trackTimescale / editInfo.movieTimescale;
+        if (mediaTime >= edit.mediaTime && mediaTime < edit.mediaTime + mediaDuration + 0.0001) {
+          return edit.movieStart / editInfo.movieTimescale + (mediaTime - edit.mediaTime) / editInfo.trackTimescale;
+        }
+      }
+      const firstPlayable = editInfo.edits.find(e => e.mediaTime >= 0);
+      if (firstPlayable) {
+        return firstPlayable.movieStart / editInfo.movieTimescale + (mediaTime - firstPlayable.mediaTime) / editInfo.trackTimescale;
+      }
+      return mediaTime / editInfo.trackTimescale;
+    }
+
+    function parseTrackStructure(view, trak, movieTimescale) {
+      const mdia = findChild(view, trak, 'mdia');
+      if (!mdia) return null;
+      const hdlr = findChild(view, mdia, 'hdlr');
+      const mdhd = findChild(view, mdia, 'mdhd');
+      const minf = findChild(view, mdia, 'minf');
+      const stbl = minf ? findChild(view, minf, 'stbl') : null;
+      if (!hdlr || !mdhd || !stbl) return null;
+
+      const handlerType = fourCC(view, hdlr.dataStart + 8);
+      const trackTimescale = (() => {
+        const { version } = readFullBoxVersionFlags(view, mdhd);
+        let p = mdhd.dataStart + 4;
+        p += version === 1 ? 16 : 8;
+        return readU32(view, p);
+      })();
+      const language = decodeMdhdLanguage(view, mdhd);
+      const stsd = findChild(view, stbl, 'stsd');
+      if (!stsd) return null;
+      const entries = readStsdEntryType(view, stsd);
+      const supportedEntry = entries.find(e => isSupportedSubtitleEntry(e.type));
+      if (!supportedEntry) return null;
+
+      const stts = findChild(view, stbl, 'stts');
+      const stsz = findChild(view, stbl, 'stsz');
+      const stsc = findChild(view, stbl, 'stsc');
+      const stco = findChild(view, stbl, 'stco');
+      const co64 = findChild(view, stbl, 'co64');
+      if (!stts || !stsz || !stsc || (!stco && !co64)) return null;
+
+      const sizeInfo = parseStsz(view, stsz);
+      const timing = parseStts(view, stts, sizeInfo.sampleCount);
+      const cttsBox = findChild(view, stbl, 'ctts');
+      const compositionOffsets = cttsBox
+        ? parseCtts(view, cttsBox, sizeInfo.sampleCount)
+        : new Array(sizeInfo.sampleCount).fill(0);
+      const chunkOffsets = parseChunkOffsets(view, stco || co64);
+      const stscEntries = parseStsc(view, stsc);
+      const sampleOffsets = buildSampleOffsets(stscEntries, chunkOffsets, sizeInfo.sizes);
+      const editInfo = parseTrackEdits(view, trak, trackTimescale, movieTimescale);
+
+      const tkhd = findChild(view, trak, 'tkhd');
+      const trackId = tkhd ? (() => {
+        const { version } = readFullBoxVersionFlags(view, tkhd);
+        return readU32(view, tkhd.dataStart + 4 + (version === 1 ? 16 : 8));
+      })() : 0;
+
+      let name = '';
+      const udta = findChild(view, trak, 'udta');
+      const nameBox = udta ? (findChild(view, udta, 'name') || findChild(view, udta, '\u00A9nam')) : null;
+      if (nameBox) {
+        const startOffset = nameBox.dataStart + (nameBox.type === 'name' ? 4 : 0);
+        const bytes = new Uint8Array(
+          view.buffer,
+          view.byteOffset + startOffset,
+          Math.max(0, nameBox.end - startOffset)
+        );
+        try {
+          name = new TextDecoder('utf-8').decode(bytes).replace(/\0/g, '').trim();
+        } catch (_) {}
+      }
+
+      return {
+        id: trackId,
+        codec: supportedEntry.type.toLowerCase(),
+        language,
+        name,
+        handlerType,
+        timescale: trackTimescale,
+        sampleCount: sizeInfo.sampleCount,
+        sampleSizes: sizeInfo.sizes,
+        sampleOffsets,
+        dts: timing.dts,
+        durations: timing.durations,
+        ctts: compositionOffsets,
+        editInfo,
+        cues: []
+      };
+    }
+
+    async function readFileBoxHeader(file, offset) {
+      if (!Number.isFinite(offset) || offset < 0 || offset + 8 > file.size) return null;
+
+      const first8 = new DataView(await file.slice(offset, Math.min(file.size, offset + 8)).arrayBuffer());
+      if (first8.byteLength < 8) return null;
+
+      const size32 = first8.getUint32(0, false);
+      const type = fourCC(first8, 4);
+
+      if (size32 === 1) {
+        if (offset + 16 > file.size) return null;
+        const head16 = new DataView(await file.slice(offset, offset + 16).arrayBuffer());
+        const size = Number(head16.getBigUint64(8, false));
+        if (!Number.isSafeInteger(size) || size < 16 || offset + size > file.size) return null;
+        return { offset, size, type, header: 16, dataStart: offset + 16, end: offset + size };
+      }
+
+      if (size32 === 0) {
+        return { offset, size: file.size - offset, type, header: 8, dataStart: offset + 8, end: file.size };
+      }
+
+      if (size32 < 8 || offset + size32 > file.size) return null;
+      return { offset, size: size32, type, header: 8, dataStart: offset + 8, end: offset + size32 };
+    }
+
+    async function locateMoovBox(file) {
+      let offset = 0;
+      const topLevelBoxes = [];
+
+      while (offset + 8 <= file.size) {
+        const box = await readFileBoxHeader(file, offset);
+        if (!box) break;
+
+        topLevelBoxes.push({ type: box.type, offset: box.offset, size: box.size });
+        if (box.type === 'moov') return box;
+
+        if (box.end <= offset || box.end === file.size) break;
+        offset = box.end;
+      }
+
+      console.warn('MP4 顶层 box 扫描结果:', topLevelBoxes);
+      return null;
+    }
+
+    async function decodeTx3gSample(data) {
+      if (data.byteLength < 2) return '';
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const length = view.getUint16(0, false);
+      const end = Math.min(data.byteLength, 2 + length);
+      const bytes = data.subarray(2, end);
+      if (!bytes.length) return '';
+      if ((bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) || looksLikeUtf16Be(bytes)) {
+        const start = bytes[0] === 0xFE && bytes[1] === 0xFF ? 2 : 0;
+        return sanitizeSubtitleText(decodeUtf16Be(bytes.subarray(start)));
+      }
+      return sanitizeSubtitleText(new TextDecoder('utf-8').decode(bytes));
+    }
+
+    function looksLikeUtf16Be(bytes) {
+      if (bytes.length < 4 || bytes.length % 2 !== 0) return false;
+      let zeros = 0;
+      for (let i = 1; i < bytes.length; i += 2) if (bytes[i] === 0) zeros++;
+      return zeros > bytes.length / 6;
+    }
+
+    function decodeUtf16Be(bytes) {
+      let out = '';
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        out += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+      }
+      return out;
+    }
+
+    function readMp4BoxBytes(bytes, start = 0, end = bytes.byteLength) {
+      const boxes = [];
+      let p = start;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      while (p + 8 <= end) {
+        const size = readU32(view, p);
+        const type = fourCC(view, p + 4);
+        if (size < 8 || p + size > end) break;
+        boxes.push({ type, data: bytes.subarray(p + 8, p + size) });
+        p += size;
+      }
+      return boxes;
+    }
+
+    function decodeWvttSample(data) {
+      const parts = [];
+      for (const box of readMp4BoxBytes(data)) {
+        if (box.type === 'payl') parts.push(new TextDecoder('utf-8').decode(box.data));
+        else if (box.type === 'vttc') parts.push(decodeWvttSample(box.data));
+      }
+      return sanitizeSubtitleText(parts.length ? parts.join('\n') : new TextDecoder('utf-8').decode(data));
+    }
+
+    function sanitizeSubtitleText(text) {
+      return String(text || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/<c(?:\.[^>]*)?>/gi, '')
+        .replace(/<\/c>/gi, '')
+        .replace(/<v(?: [^>]*)?>/gi, '')
+        .replace(/<\/v>/gi, '')
+        .replace(/<b>|<\/b>|<i>|<\/i>|<u>|<\/u>/gi, '')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim();
+    }
+
+    async function extractTrackCues(file, track) {
+      const cues = [];
+      const timeScale = track.timescale || 1;
+      const total = track.sampleCount;
+      for (let i = 0; i < total; i++) {
+        const offset = track.sampleOffsets[i];
+        const size = track.sampleSizes[i];
+        if (!Number.isFinite(offset) || !Number.isFinite(size) || size < 0 || offset + size > file.size) continue;
+        const data = new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
+        const text = track.codec === 'tx3g' ? await decodeTx3gSample(data) : decodeWvttSample(data);
+        if (!text.trim()) continue;
+        const mediaStart = (track.dts[i] || 0) + (track.ctts[i] || 0);
+        const mediaEnd = mediaStart + (track.durations[i] || 0);
+        const start = mapMediaTimeToMovieSeconds(mediaStart, track.editInfo);
+        const endMapped = mapMediaTimeToMovieSeconds(mediaEnd, track.editInfo);
+        const end = Math.max(endMapped, start + Math.max(0.01, (track.durations[i] || 1) / timeScale));
+        cues.push({ start, end, text });
+        if ((i + 1) % 25 === 0) subtitleStatus.textContent = `正在提取 ${track.codec} 字幕… ${i + 1}/${total}`;
+      }
+      return cues.sort((a, b) => a.start - b.start);
+    }
+
+    async function scanEmbeddedSubtitles(file) {
+      const generation = ++mp4ParseGeneration;
+      resetEmbeddedSubtitleSelect('正在扫描…');
+      embeddedSubtitleTracks = [];
+      if (!/^video\/mp4$|\.mp4$|\.m4v$/i.test(file.type || '') && !/\.(mp4|m4v)$/i.test(file.name)) {
+        subtitleStatus.textContent = '当前内嵌字幕扫描器针对 MP4；请选择 MP4 文件。';
+        resetEmbeddedSubtitleSelect('仅支持 MP4');
+        return;
+      }
+
+      try {
+        subtitleStatus.textContent = '正在读取 MP4 结构…';
+        const moovLocation = await locateMoovBox(file);
+        if (generation !== mp4ParseGeneration) return;
+        if (!moovLocation) throw new Error('未找到 moov box');
+
+        const moovBuffer = await file.slice(moovLocation.offset, moovLocation.offset + moovLocation.size).arrayBuffer();
+        const view = new DataView(moovBuffer);
+        const moov = parseBoxHeader(view, 0, view.byteLength);
+        const mvhd = findChild(view, moov, 'mvhd');
+        const movieTimescale = mvhd ? readMvhdTimescale(view, mvhd) : 1000;
+        const traks = findChildren(view, moov, 'trak');
+        const candidates = [];
+        for (const trak of traks) {
+          const parsed = parseTrackStructure(view, trak, movieTimescale);
+          if (parsed && (parsed.handlerType === 'sbtl' || parsed.handlerType === 'text' || parsed.codec === 'tx3g' || parsed.codec === 'wvtt')) {
+            candidates.push(parsed);
+          }
+        }
+
+        if (!candidates.length) {
+          resetEmbeddedSubtitleSelect('没有内嵌文本字幕');
+          subtitleStatus.textContent = '没有检测到可解析的 MP4 内嵌文本字幕（支持 tx3g/mov_text、wvtt）。';
+          return;
+        }
+
+        subtitleStatus.textContent = `发现 ${candidates.length} 条文本字幕轨，正在逐条读取 sample…`;
+        const parsedTracks = [];
+        for (const track of candidates) {
+          if (generation !== mp4ParseGeneration) return;
+          const cues = await extractTrackCues(file, track);
+          parsedTracks.push({ ...track, cues });
+        }
+
+        embeddedSubtitleTracks = parsedTracks.filter(t => t.cues.length > 0);
+        if (!embeddedSubtitleTracks.length) {
+          resetEmbeddedSubtitleSelect('未提取到字幕内容');
+          const detail = parsedTracks.map(t => `#${t.id} ${t.codec}: ${t.sampleCount} samples`).join('；');
+          subtitleStatus.textContent = `检测到文本字幕轨，但未成功提取字幕 sample。${detail}`;
+          return;
+        }
+
+        embeddedSubtitleSelect.innerHTML = '';
+        const off = document.createElement('option');
+        off.value = '';
+        off.textContent = '关闭字幕';
+        embeddedSubtitleSelect.appendChild(off);
+        for (const track of embeddedSubtitleTracks) {
+          const option = document.createElement('option');
+          option.value = String(track.id);
+          const name = track.name ? ` · ${track.name}` : '';
+          option.textContent = `#${track.id} · ${track.codec} · ${formatLanguage(track.language)}${name} · ${track.cues.length} 条`;
+          embeddedSubtitleSelect.appendChild(option);
+        }
+        embeddedSubtitleSelect.disabled = false;
+        embeddedSubtitleSelect.value = '';
+        closeEmbeddedSubtitleMenu();
+        syncEmbeddedSubtitleMenu();
+        activeEmbeddedTrackId = null;
+
+        // 尝试恢复上次选中的内嵌字幕
+        if (embeddedRestoreTrackId != null && activeSubtitleSource !== 'external') {
+          const track = embeddedSubtitleTracks.find(t => String(t.id) === String(embeddedRestoreTrackId));
+          if (track) {
+            embeddedSubtitleSelect.value = String(track.id);
+            embeddedSubtitleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            setSubtitleCues([], 'none', `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕，请选择。`);
+          }
+          embeddedRestoreTrackId = null;
+        } else if (activeSubtitleSource !== 'external') {
+          setSubtitleCues([], 'none', `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕，请选择。`);
+        } else {
+          subtitleStatus.textContent = `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕（当前使用外部字幕）`;
+        }
+      } catch (err) {
+        console.error('MP4 内嵌字幕解析失败:', err);
+        if (generation !== mp4ParseGeneration) return;
+        resetEmbeddedSubtitleSelect('解析失败');
+        subtitleStatus.textContent = 'MP4 内嵌字幕解析失败：' + (err?.message || err);
+      }
+    }
+
+    // ==========================================
+    // 媒体播放与文件加载
+    // ==========================================
+    function setPlayIcon(isPlaying) {
+      playIcon.innerHTML = isPlaying
+        ? '<rect x="7" y="5" width="4" height="14" rx="1"></rect><rect x="13" y="5" width="4" height="14" rx="1"></rect>'
+        : '<path d="M8 5.5v13l10-6.5-10-6.5Z"></path>';
+      btnPlay.setAttribute('aria-label', isPlaying ? '暂停' : '播放');
+      btnPlay.title = isPlaying ? '暂停' : '播放';
+    }
+
+    function updateNavButtons() {
+      const hasCurrent = currentPlaylistIndex >= 0 && currentPlaylistIndex < playlist.length &&
+        playlist[currentPlaylistIndex] && !playlist[currentPlaylistIndex].__meta;
+      btnPrev.disabled = !hasCurrent || currentPlaylistIndex <= 0;
+      btnNext.disabled = !hasCurrent || currentPlaylistIndex >= playlist.length - 1;
+      btnPrev.style.opacity = btnPrev.disabled ? '0.35' : '1';
+      btnNext.style.opacity = btnNext.disabled ? '0.35' : '1';
+      btnClearPlaylist.disabled = playlist.length === 0;
+      btnClearPlaylist.style.opacity = playlist.length === 0 ? '0.45' : '1';
+    }
+
+    function formatFileSize(bytes) {
+      if (!Number.isFinite(bytes)) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = bytes;
+      let index = 0;
+      while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index++;
+      }
+      return `${value.toFixed(index === 0 ? 0 : value >= 100 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function renderPlaylist() {
+      playlistList.innerHTML = '';
+      playlistCount.textContent = `${playlist.length} 个视频`;
+
+      if (!playlist.length) {
+        const empty = document.createElement('div');
+        empty.className = 'playlist-empty';
+        empty.innerHTML = '还没有视频。<br>点击“添加视频”可以一次选择多个文件，<br>也可以把文件直接拖进播放器。';
+        playlistList.appendChild(empty);
+        updateNavButtons();
+        return;
+      }
+
+      playlist.forEach((file, index) => {
+        const isMeta = !!file.__meta;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'playlist-item'
+          + (index === currentPlaylistIndex ? ' active' : '')
+          + (isMeta ? ' pending' : '');
+        item.title = isMeta ? `${file.name}（待重新选择）` : file.name;
+
+        item.innerHTML = `
+          <span class="playlist-index">${String(index + 1).padStart(2, '0')}</span>
+          <span class="playlist-name"></span>
+          <span class="playlist-size">${formatFileSize(file.size)}</span>
+        `;
+        item.querySelector('.playlist-name').textContent = isMeta
+          ? `${file.name}（待重新选择）`
+          : file.name;
+
+        item.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (isMeta) {
+            showToast('请重新选择该视频文件以恢复播放');
+            inputVideo.click();
+            return;
+          }
+          await loadPlaylistItem(index, true);
+        });
+        playlistList.appendChild(item);
+      });
+      updateNavButtons();
+    }
+
+    function addFilesToPlaylist(files, options = {}) {
+      const { playSingle = false, autoLoadFirstIfIdle = false } = options;
+
+      const incoming = Array.from(files || []).filter(isVideoFile);
+      if (!incoming.length) {
+        showToast('没有可播放的视频文件');
+        return;
+      }
+
+      let lastAddedIndex = -1;
+      let addedCount = 0;
+
+      for (const file of incoming) {
+        const key = fileKey(file);
+
+        // 优先匹配"待重新选择"的元数据槽位
+        const metaIdx = playlist.findIndex(item => item.__meta && fileKey(item) === key);
+        if (metaIdx !== -1) {
+          playlist[metaIdx] = file;
+          lastAddedIndex = metaIdx;
+          continue;
+        }
+
+        // 已存在真实文件则跳过
+        if (playlist.some(item => !item.__meta && fileKey(item) === key)) continue;
+
+        playlist.push(file);
+        lastAddedIndex = playlist.length - 1;
+        addedCount++;
+      }
+
+      renderPlaylist();
+      saveStateNow();
+
+      // 拖入/选择单个视频 → 直接播放
+      if (playSingle && incoming.length === 1 && lastAddedIndex !== -1) {
+        loadPlaylistItem(lastAddedIndex, true);
+        return;
+      }
+
+      // 当前无视频时，自动加载第一个真实文件
+      const hasCurrent = currentPlaylistIndex >= 0 && playlist[currentPlaylistIndex] && !playlist[currentPlaylistIndex].__meta;
+      if (autoLoadFirstIfIdle && !hasCurrent && !video.src) {
+        const firstReal = playlist.findIndex(f => !f.__meta);
+        if (firstReal !== -1) {
+          loadPlaylistItem(firstReal, true);
+          return;
+        }
+      }
+
+      showToast(addedCount > 0 ? `已加入 ${addedCount} 个视频` : '没有新增视频');
+    }
+
+    function resetMediaUiForNewItem() {
+      txtCurrentTime.textContent = '00:00';
+      txtDuration.textContent = '00:00';
+      seekBar.value = '0';
+      setPlayIcon(false);
+      setPlayerStatus('加载中');
+
+      activeEmbeddedTrackId = null;
+      embeddedSubtitleTracks = [];
+      embeddedSubtitleSelect.innerHTML = '<option value="">正在扫描…</option>';
+      embeddedSubtitleSelect.disabled = true;
+      closeEmbeddedSubtitleMenu();
+      syncEmbeddedSubtitleMenu();
+
+      // 外部字幕是全局保持的：如果之前启用了外部字幕，切换视频后继续沿用
+      if (activeSubtitleSource === 'external' && externalSubtitleData) {
+        subFileName.textContent = externalSubtitleData.name || '外部字幕';
+        subtitleStatus.textContent = `外部字幕：${externalSubtitleData.name || ''}`;
+      } else {
+        subtitles = [];
+        activeSubtitleSource = 'none';
+        subtitleLayer.textContent = '';
+        subFileName.textContent = '选择 .srt / .vtt';
+        subtitleStatus.textContent = '正在扫描 MP4 内嵌文本字幕…';
+        inputSub.value = '';
+      }
+
+      currentTitle.textContent = '加载中…';
+    }
+
+    async function loadPlaylistItem(index, autoplay = true) {
+      if (index < 0 || index >= playlist.length) return;
+
+      const file = playlist[index];
+      if (!file || file.__meta) {
+        showToast('请重新选择该视频文件以恢复播放');
+        inputVideo.click();
+        return;
+      }
+
+      // 切换前先保存当前进度
+      saveStateNow();
+
+      currentPlaylistIndex = index;
+      renderPlaylist();
+      togglePlaylist(false);
+      resetMediaUiForNewItem();
+      currentTitle.textContent = file.name;
+
+      // 判断是否需要恢复进度
+      let seekTarget = 0;
+      if (restoreKey && fileKey(file) === restoreKey && restoreTime > 0) {
+        seekTarget = restoreTime;
+        restoreKey = null;
+        restoreTime = 0;
+      }
+      pendingSeekTime = seekTarget;
+
+      if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
+      videoObjectUrl = URL.createObjectURL(file);
+      video.src = videoObjectUrl;
+      video.load();
+
+      try {
+        if (autoplay) {
+          await video.play();
+          setPlayIcon(true);
+          setPlayerStatus('播放中');
+        } else {
+          video.pause();
+          setPlayIcon(false);
+          setPlayerStatus('待播放');
+        }
+      } catch (err) {
+        console.warn('自动播放被浏览器阻止，请手动点击播放。', err);
+        setPlayIcon(false);
+        setPlayerStatus('待播放');
+      }
+
+      if (/\.(mp4|m4v)$/i.test(file.name)) {
+        scanEmbeddedSubtitles(file);
+      } else {
+        embeddedSubtitleSelect.innerHTML = '<option value="">仅扫描 MP4</option>';
+        embeddedSubtitleSelect.disabled = true;
+        closeEmbeddedSubtitleMenu();
+        syncEmbeddedSubtitleMenu();
+        subtitleStatus.textContent = '内嵌字幕扫描器目前只针对 MP4。';
+      }
+
+      saveStateNow();
+    }
+
+    // ==========================================
+    // 外部字幕 / LUT 加载
+    // ==========================================
+    async function loadExternalSubtitleFile(file) {
+      const text = await file.text();
+      parseSRTorVTT(text);
+
+      activeSubtitleSource = 'external';
+      activeSubtitleFileName = file.name;
+      externalSubtitleData = { name: file.name, text };
+
+      // 关闭内嵌字幕
+      activeEmbeddedTrackId = null;
+      embeddedSubtitleSelect.value = '';
+      closeEmbeddedSubtitleMenu();
+      syncEmbeddedSubtitleMenu();
+
+      subFileName.textContent = file.name;
+      subtitleStatus.textContent = `外部字幕：${file.name}`;
+      updateSubtitles();
+
+      await saveAssets();
+      saveStateNow();
+    }
+
+    async function loadLutFile(file) {
+      const text = await file.text();
+      currentLutText = text;
+      currentLutFileName = file.name;
+      lutFileName.textContent = file.name;
+
+      parseAndApplyCubeLUT(text);
+      chkLut.checked = true;
+
+      await saveAssets();
+      saveStateNow();
+    }
+
+    // ==========================================
+    // 事件绑定
+    // ==========================================
+    btnPlay.addEventListener('click', async () => {
+      if (!video.src) {
+        const firstReal = playlist.findIndex(f => !f.__meta);
+        if (firstReal !== -1) {
+          await loadPlaylistItem(firstReal, true);
+          return;
+        }
+        if (playlist.length > 0) {
+          showToast('请重新选择视频文件');
+          inputVideo.click();
+          return;
+        }
+        inputVideo.click();
+        showToast('请选择一个视频');
+        return;
+      }
+      if (video.paused) {
+        try {
+          await video.play();
+        } catch (err) {
+          console.warn(err);
+          showToast('播放失败，请检查视频格式');
+        }
+      } else {
+        video.pause();
+      }
+    });
+
+    video.addEventListener('play', () => {
+      setPlayIcon(true);
+      setPlayerStatus('播放中');
+      showUI();
+    });
+
+    video.addEventListener('pause', () => {
+      setPlayIcon(false);
+      setPlayerStatus(video.ended ? '已结束' : '已暂停');
+      showUI();
+      saveStateNow();
+    });
+
+    video.addEventListener('loadedmetadata', () => {
+      txtDuration.textContent = formatTime(video.duration);
+      setPlayerStatus(video.paused ? '待播放' : '播放中');
+
+      if (pendingSeekTime > 0 && Number.isFinite(video.duration)) {
+        try {
+          video.currentTime = Math.min(pendingSeekTime, Math.max(0, video.duration - 0.05));
+        } catch (err) {
+          console.warn('恢复时间戳失败', err);
+        }
+        pendingSeekTime = 0;
+        updateSubtitles();
+        showToast(`已恢复到 ${formatTime(video.currentTime)}`);
+      }
+    });
+
+    video.addEventListener('timeupdate', () => {
+      if (!isNaN(video.duration) && video.duration > 0) {
+        seekBar.value = String((video.currentTime / video.duration) * 100);
+        txtCurrentTime.textContent = formatTime(video.currentTime);
+        txtDuration.textContent = formatTime(video.duration);
+      }
+      updateSubtitles();
+      saveStateThrottled();
+    });
+
+    video.addEventListener('seeked', () => {
+      updateSubtitles();
+      saveStateNow();
+    });
+
+    video.addEventListener('ended', async () => {
+      if (currentPlaylistIndex >= 0 && currentPlaylistIndex < playlist.length - 1) {
+        // 跳过元数据槽位
+        let nextIndex = currentPlaylistIndex + 1;
+        while (nextIndex < playlist.length && playlist[nextIndex].__meta) nextIndex++;
+        if (nextIndex < playlist.length) {
+          await loadPlaylistItem(nextIndex, true);
+          showToast('自动播放下一部');
+          return;
+        }
+      }
+      setPlayerStatus('播放完成');
+      setPlayIcon(false);
+    });
+
+    seekBar.addEventListener('input', () => {
+      if (!isNaN(video.duration) && video.duration > 0) {
+        video.currentTime = (Number(seekBar.value) / 100) * video.duration;
+        updateSubtitles();
+      }
+    });
+
+    volumeBar.addEventListener('input', () => {
+      video.volume = Number(volumeBar.value);
+      if (video.volume > 0) video.muted = false;
+      saveStateNow();
+    });
+
+    function changeVolume(delta) {
+      let next = video.volume + delta;
+      next = Math.min(1, Math.max(0, Number(next.toFixed(4))));
+      video.volume = next;
+      if (next > 0) video.muted = false;
+      volumeBar.value = String(next);
+      showToast(`音量 ${Math.round(next * 100)}%`);
+      saveStateNow();
+    }
+
+    btnPrev.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      let prevIndex = currentPlaylistIndex - 1;
+      while (prevIndex >= 0 && playlist[prevIndex].__meta) prevIndex--;
+      if (prevIndex >= 0) await loadPlaylistItem(prevIndex, true);
+    });
+
+    btnNext.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      let nextIndex = currentPlaylistIndex + 1;
+      while (nextIndex < playlist.length && playlist[nextIndex].__meta) nextIndex++;
+      if (nextIndex < playlist.length) await loadPlaylistItem(nextIndex, true);
+    });
+
+    btnClearPlaylist.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      playlist = [];
+      currentPlaylistIndex = -1;
+      restoreKey = null;
+      restoreTime = 0;
+      pendingSeekTime = 0;
+
+      if (videoObjectUrl) {
+        URL.revokeObjectURL(videoObjectUrl);
+        videoObjectUrl = null;
+      }
+      video.removeAttribute('src');
+      video.load();
+
+      currentTitle.textContent = '选择一个视频开始播放';
+      setPlayerStatus('就绪');
+      txtCurrentTime.textContent = '00:00';
+      txtDuration.textContent = '00:00';
+      seekBar.value = '0';
+      setPlayIcon(false);
+
+      setSubtitleCues([], 'none', '等待视频');
+      resetEmbeddedSubtitleSelect('请先选择 MP4');
+
+      renderPlaylist();
+      saveStateNow();
+      showToast('播放列表已清空');
+    });
+
+    inputVideo.addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (!files?.length) return;
+      addFilesToPlaylist(files, {
+        playSingle: files.length === 1,
+        autoLoadFirstIfIdle: true
+      });
+      inputVideo.value = '';
+    });
+
+    embeddedSubtitleTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleEmbeddedSubtitleMenu();
+    });
+
+    embeddedSubtitleMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!embeddedSubtitlePicker.contains(e.target)) closeEmbeddedSubtitleMenu();
+    });
+
+    embeddedSubtitleSelect.addEventListener('change', () => {
+      syncEmbeddedSubtitleMenu();
+      const value = embeddedSubtitleSelect.value;
+
+      if (value === '') {
+        activeEmbeddedTrackId = null;
+        if (activeSubtitleSource === 'embedded') {
+          setSubtitleCues([], 'none', '已关闭字幕');
+        }
+        saveStateNow();
+        return;
+      }
+
+      const track = embeddedSubtitleTracks.find(t => String(t.id) === value);
+      if (!track) {
+        setSubtitleCues([], 'none', '未找到所选字幕轨');
+        return;
+      }
+
+      activeEmbeddedTrackId = track.id;
+      activeSubtitleSource = 'embedded';
+      setSubtitleCues(
+        track.cues,
+        'embedded',
+        `内嵌字幕：${track.codec} · ${formatLanguage(track.language)}（${track.cues.length} 条）`
+      );
+      saveStateNow();
+    });
+
+    subtitleSizeInput.addEventListener('input', () => {
+      setSubtitleFontSize(subtitleSizeInput.value);
+      saveStateNow();
+    });
+
+    inputLut.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      await loadLutFile(file);
+      showToast(`LUT 已载入并开启：${file.name}`);
+      inputLut.value = '';
+    });
+
+    inputSub.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      await loadExternalSubtitleFile(file);
+      showToast(`外部字幕已载入：${file.name}`);
+      inputSub.value = '';
+    });
+
+    chkLut.addEventListener('change', () => {
+      showToast(chkLut.checked ? 'LUT 已开启' : 'LUT 已关闭');
+      saveStateNow();
+    });
+
+    // ==========================================
+    // 键盘快捷键
+    // ==========================================
+    document.addEventListener('keydown', async (e) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          btnPlay.click();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 5);
+          updateSubtitles();
+          showToast('快退 5 秒');
+          saveStateNow();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+          updateSubtitles();
+          showToast('快进 5 秒');
+          saveStateNow();
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          changeVolume(0.05);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          changeVolume(-0.05);
+          break;
+        case 'KeyF':
+          e.preventDefault();
+          if (document.fullscreenElement || document.webkitFullscreenElement) {
+            btnExitFullscreen.click();
+          } else {
+            btnEnterFullscreen.click();
+          }
+          break;
+        case 'KeyM':
+          e.preventDefault();
+          video.muted = !video.muted;
+          volumeBar.value = video.muted ? '0' : String(video.volume || 1);
+          showToast(video.muted ? '已静音' : '已取消静音');
+          saveStateNow();
+          break;
+        case 'Escape':
+          closeEmbeddedSubtitleMenu();
+          break;
+      }
+    });
+
+    // ==========================================
+    // 拖放导入
+    // ==========================================
+    let dragCounter = 0;
+
+    container.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      container.classList.add('drag-over');
+    });
+
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    });
+
+    container.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        container.classList.remove('drag-over');
+      }
+    });
+
+    container.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      container.classList.remove('drag-over');
+      showUI();
+
+      const files = Array.from(e.dataTransfer?.files || []);
+      if (!files.length) return;
+
+      const videos = files.filter(isVideoFile);
+      const subtitleFiles = files.filter(isSubtitleFile);
+      const lutFiles = files.filter(isLutFile);
+
+      const ignored = files.length - videos.length - subtitleFiles.length - lutFiles.length;
+
+      // 视频处理
+      if (videos.length === 1) {
+        addFilesToPlaylist(videos, { playSingle: true, autoLoadFirstIfIdle: true });
+      } else if (videos.length > 1) {
+        addFilesToPlaylist(videos, { playSingle: false, autoLoadFirstIfIdle: true });
+      }
+
+      // 字幕处理：只能一个
+      if (subtitleFiles.length === 1) {
+        await loadExternalSubtitleFile(subtitleFiles[0]);
+        showToast(`外部字幕已载入：${subtitleFiles[0].name}`);
+      } else if (subtitleFiles.length > 1) {
+        showToast('一次只能拖入一个字幕文件，操作已忽略');
+      }
+
+      // LUT 处理：只能一个
+      if (lutFiles.length === 1) {
+        await loadLutFile(lutFiles[0]);
+        showToast(`LUT 已载入并开启：${lutFiles[0].name}`);
+      } else if (lutFiles.length > 1) {
+        showToast('一次只能拖入一个 LUT 文件，操作已忽略');
+      }
+
+      if (!videos.length && !subtitleFiles.length && !lutFiles.length) {
+        showToast('未识别到可导入的文件');
+      }
+    });
+
+    // 阻止浏览器直接打开拖入文件
+    window.addEventListener('dragover', (e) => { e.preventDefault(); });
+    window.addEventListener('drop', (e) => { e.preventDefault(); });
+
+    // ==========================================
+    // 退出前保存
+    // ==========================================
+    window.addEventListener('beforeunload', () => {
+      try { saveQuickState(); } catch (_) {}
+    });
+    window.addEventListener('pagehide', () => {
+      try { saveQuickState(); } catch (_) {}
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        try { saveQuickState(); } catch (_) {}
+      }
+    });
+
+    // ==========================================
+    // 时间格式化
+    // ==========================================
+    function formatTime(sec) {
+      if (!Number.isFinite(sec) || sec < 0) sec = 0;
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      if (h > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      }
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // ==========================================
+    // 初始化
+    // ==========================================
+    initWebGL();
+    requestAnimationFrame(render);
+
+    setSubtitleFontSize(DEFAULT_SUBTITLE_SIZE);
+    setPlayIcon(false);
+
+    restoreState().then(() => {
+      renderPlaylist();
+      updateNavButtons();
+      console.log('状态恢复完成');
+    }).catch((err) => {
+      console.warn('状态恢复失败', err);
+      renderPlaylist();
+    });
+
+  </script>
+</body>
+</html>
