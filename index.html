@@ -119,9 +119,20 @@
       rgba(0,0,0,0.56) 100%);
   }
 
+  /* 隐藏时必须"真正不可点击"。
+     注意：.ui-overlay 的子元素（.control-bar / .action-block 等）自己声明了
+     pointer-events: auto，所以父级设 pointer-events:none 拦不住它们 ——
+     这就是"UI 看不见但按钮还能点"的原因。
+     这里用 visibility + 通配覆盖做双保险；visibility 延迟到淡出结束才生效，保留原有淡出动画。 */
   .ui-overlay.hidden {
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
+    transition: opacity 220ms ease, visibility 0s linear 220ms;
+  }
+
+  .ui-overlay.hidden * {
+    pointer-events: none !important;
   }
 
   .hud {
@@ -1288,6 +1299,9 @@
     let saveStateTimer = null;
     let uiHideTimer = null;
     let isManualUiHidden = false;
+    // 由"隐藏"按钮触发的粘性隐藏：此状态下鼠标移动不再唤出 UI，
+    // 只有【鼠标左键按下】或【按下 F11】才把 UI 唤回来。
+    let isStickyUiHidden = false;
 
     // ============ 工具函数 ============
     function fileKey(file) {
@@ -1750,7 +1764,15 @@
       toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    function showUI() {
+    /**
+     * 显示 UI。
+     * @param {boolean} force  true = 强制显示（左键点击 / F11 用），可突破粘性隐藏
+     */
+    function showUI(force = false) {
+      // 粘性隐藏期间，普通唤出（鼠标移动、播放事件等）一律忽略
+      if (isStickyUiHidden && !force) return;
+      isStickyUiHidden = false;
+
       uiOverlay.classList.remove('hidden');
       container.classList.remove('hide-cursor');
       isManualUiHidden = false;
@@ -1761,9 +1783,19 @@
       }
     }
 
-    function hideUI() {
+    /**
+     * 隐藏 UI。
+     * @param {boolean} keepCursor  true = 保留鼠标光标（点"隐藏"按钮时用：
+     *                              光标照常显示，只是所有 UI 都不出现）
+     */
+    function hideUI(keepCursor = false) {
+      clearTimeout(uiHideTimer);
       uiOverlay.classList.add('hidden');
-      container.classList.add('hide-cursor');
+      if (keepCursor) {
+        container.classList.remove('hide-cursor');
+      } else {
+        container.classList.add('hide-cursor');
+      }
       isManualUiHidden = true;
       settingsPanel.classList.remove('open');
       playlistPanel.classList.remove('open');
@@ -1783,12 +1815,35 @@
       if (open) showUI();
     }
 
+    // 鼠标移动只负责在"非粘性"状态下唤出 UI；
+    // 粘性隐藏时 showUI() 会直接返回，所以移动鼠标不会有任何 UI 变化（光标照常显示）
     container.addEventListener('mousemove', () => showUI());
+
+    // 粘性隐藏状态下：只有按下鼠标左键才把 UI 唤回来
+    container.addEventListener('mousedown', (e) => {
+      if (!isStickyUiHidden) return;
+      if (e.button !== 0) return;   // 只认左键
+      showUI(true);
+    });
 
     btnHideUi.addEventListener('click', (e) => {
       e.stopPropagation();
-      hideUI();
+      // 粘性隐藏：之后鼠标移动不再唤出 UI，必须左键点击或按 F11
+      isStickyUiHidden = true;
+      hideUI(true);   // keepCursor = true -> 保留鼠标光标
     });
+
+    // F11：浏览器自己负责切换全屏，这里只顺带把 UI 显示出来。
+    //      不论当前是全屏还是非全屏、不论 UI 是否被粘性隐藏，按下就显示。
+    //      用 capture 阶段监听，确保不被其它键盘逻辑的提前 return 挡掉；不 preventDefault。
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'F11' && e.key !== 'F11') return;
+      isStickyUiHidden = false;
+      showUI(true);
+      // 浏览器处理完 F11 后，全屏状态才会变，延迟同步一下按钮图标
+      setTimeout(syncFullscreenButtons, 120);
+      setTimeout(syncFullscreenButtons, 400);
+    }, true);
 
     btnOpenVideo.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1826,7 +1881,48 @@
       }
     });
 
+    // ---------------------------------------------------------------
+    // 全屏状态判断
+    //
+    // 这里有一个浏览器层面的硬边界，必须区分两种"全屏"：
+    //   1) 元素全屏：container.requestFullscreen()  → document.fullscreenElement 有值
+    //   2) 浏览器全屏：用户按 F11                     → document.fullscreenElement 为 null
+    //
+    // 两者互相独立。页面无法查询、也无法用 JS 退出浏览器全屏（F11），
+    // 所以按 F11 进入的全屏只能再按 F11 退出 —— 这不是代码 bug，是浏览器限制。
+    // 我们能做的是：把图标状态显示正确，并在用户点按钮时给出明确提示。
+    // ---------------------------------------------------------------
+    function getElementFullscreen() {
+      return document.fullscreenElement || document.webkitFullscreenElement || null;
+    }
+
+    function isBrowserFullscreen() {
+      if (getElementFullscreen()) return false;   // 已经是元素全屏，不算
+      // 没有 API 可查浏览器全屏，用"视口是否已铺满屏幕"来推断。
+      // 最大化窗口会比屏幕矮（标题栏+工具栏），所以用 2px 容差判断不会误判。
+      const w = window.innerWidth || 0;
+      const h = window.innerHeight || 0;
+      const sw = Math.max(screen.width || 0, screen.availWidth || 0);
+      const sh = Math.max(screen.height || 0, screen.availHeight || 0);
+      return w >= sw - 2 && h >= sh - 2;
+    }
+
+    function anyFullscreen() {
+      return !!getElementFullscreen() || isBrowserFullscreen();
+    }
+
+    function syncFullscreenButtons() {
+      const fs = anyFullscreen();
+      btnEnterFullscreen.style.display = fs ? 'none' : 'inline-flex';
+      btnExitFullscreen.style.display = fs ? 'inline-flex' : 'none';
+    }
+
     btnEnterFullscreen.addEventListener('click', async () => {
+      // 已经在任何一种全屏里，就不要再叠一层元素全屏（那会造成"图标变了但没退出"）
+      if (anyFullscreen()) {
+        syncFullscreenButtons();
+        return;
+      }
       try {
         if (container.requestFullscreen) await container.requestFullscreen();
         else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
@@ -1834,25 +1930,38 @@
         console.error('进入全屏失败:', err);
         showToast('无法进入全屏');
       }
+      syncFullscreenButtons();
     });
 
     btnExitFullscreen.addEventListener('click', async () => {
-      try {
-        if (document.exitFullscreen) await document.exitFullscreen();
-        else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
-      } catch (err) {
-        console.error('退出全屏失败:', err);
+      if (getElementFullscreen()) {
+        try {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+        } catch (err) {
+          console.error('退出全屏失败:', err);
+        }
+        syncFullscreenButtons();
+        return;
       }
+      if (isBrowserFullscreen()) {
+        // 页面无权退出浏览器全屏，只能明确告诉用户怎么做
+        showToast('当前是浏览器全屏（F11），请再按一次 F11 退出', 2800);
+        return;
+      }
+      syncFullscreenButtons();
     });
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    // 浏览器全屏切换只会触发 resize（不会触发 fullscreenchange），靠它同步图标
+    window.addEventListener('resize', syncFullscreenButtons);
 
     function handleFullscreenChange() {
-      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      btnEnterFullscreen.style.display = isFullscreen ? 'none' : 'inline-flex';
-      btnExitFullscreen.style.display = isFullscreen ? 'inline-flex' : 'none';
-      if (isFullscreen) showUI();
+      syncFullscreenButtons();
+      // 全屏状态变化时总是显示 UI（进入和退出都算）。
+      // 这样即使某些环境下 F11 的 keydown 送不到页面，F11 引起全屏变化时也能唤出 UI。
+      showUI(true);
     }
 
     // ==========================================
@@ -2342,7 +2451,10 @@
       return null;
     }
 
-    async function decodeTx3gSample(data) {
+    // 复用同一个 TextDecoder：旧代码每解码一条字幕就 new 一个，字幕多时是实打实的开销
+    const UTF8_DECODER = new TextDecoder('utf-8');
+
+    function decodeTx3gSample(data) {
       if (data.byteLength < 2) return '';
       const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
       const length = view.getUint16(0, false);
@@ -2353,7 +2465,7 @@
         const start = bytes[0] === 0xFE && bytes[1] === 0xFF ? 2 : 0;
         return sanitizeSubtitleText(decodeUtf16Be(bytes.subarray(start)));
       }
-      return sanitizeSubtitleText(new TextDecoder('utf-8').decode(bytes));
+      return sanitizeSubtitleText(UTF8_DECODER.decode(bytes));
     }
 
     function looksLikeUtf16Be(bytes) {
@@ -2388,10 +2500,10 @@
     function decodeWvttSample(data) {
       const parts = [];
       for (const box of readMp4BoxBytes(data)) {
-        if (box.type === 'payl') parts.push(new TextDecoder('utf-8').decode(box.data));
+        if (box.type === 'payl') parts.push(UTF8_DECODER.decode(box.data));
         else if (box.type === 'vttc') parts.push(decodeWvttSample(box.data));
       }
-      return sanitizeSubtitleText(parts.length ? parts.join('\n') : new TextDecoder('utf-8').decode(data));
+      return sanitizeSubtitleText(parts.length ? parts.join('\n') : UTF8_DECODER.decode(data));
     }
 
     function sanitizeSubtitleText(text) {
@@ -2411,24 +2523,126 @@
         .trim();
     }
 
-    async function extractTrackCues(file, track) {
-      const cues = [];
-      const timeScale = track.timescale || 1;
+    // ---------------------------------------------------------------
+    // 内嵌字幕 sample 读取
+    //
+    // 旧实现：每条字幕单独 file.slice().arrayBuffer()，并且在循环里逐条 await。
+    //         一部电影 2000 条字幕 = 2000 次串行 I/O —— 这就是"字幕多就读取很久"的根因。
+    //
+    // 新实现分三步：
+    //   ① 合并读取区间：MP4 里同一条字幕轨的 sample 通常连续存放，把间隔小于 16KB 的
+    //      sample 合并成一段，整条轨道往往只需 1~3 次读取。
+    //   ② 有限并发读取（默认 4 路）：既快，又不会像 Promise.all 一把梭那样把浏览器
+    //      I/O 打爆（"读太快反而读不到"多半就是这么来的）。
+    //   ③ 解码阶段改成纯同步，每 400 条让出一次事件循环，进度文字能刷新、界面不卡。
+    // ---------------------------------------------------------------
+
+    /** 把每条 sample 的 [offset, offset+size) 合并成尽量少的连续区间 */
+    function mergeReadRanges(track, fileSize, maxGap = 16384, maxSpan = 8 * 1024 * 1024) {
+      const items = [];
       const total = track.sampleCount;
       for (let i = 0; i < total; i++) {
-        const offset = track.sampleOffsets[i];
+        const off = track.sampleOffsets[i];
         const size = track.sampleSizes[i];
-        if (!Number.isFinite(offset) || !Number.isFinite(size) || size < 0 || offset + size > file.size) continue;
-        const data = new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
-        const text = track.codec === 'tx3g' ? await decodeTx3gSample(data) : decodeWvttSample(data);
-        if (!text.trim()) continue;
-        const mediaStart = (track.dts[i] || 0) + (track.ctts[i] || 0);
-        const mediaEnd = mediaStart + (track.durations[i] || 0);
-        const start = mapMediaTimeToMovieSeconds(mediaStart, track.editInfo);
-        const endMapped = mapMediaTimeToMovieSeconds(mediaEnd, track.editInfo);
-        const end = Math.max(endMapped, start + Math.max(0.01, (track.durations[i] || 1) / timeScale));
-        cues.push({ start, end, text });
-        if ((i + 1) % 25 === 0) subtitleStatus.textContent = `正在提取 ${track.codec} 字幕… ${i + 1}/${total}`;
+        if (!Number.isFinite(off) || !Number.isFinite(size) || size <= 0) continue;
+        if (off < 0 || off + size > fileSize) continue;
+        items.push({ i, start: off, end: off + size });
+      }
+      items.sort((a, b) => a.start - b.start);
+
+      const ranges = [];
+      for (const it of items) {
+        const last = ranges[ranges.length - 1];
+        const canMerge = last
+          && it.start - last.end <= maxGap
+          && it.end - last.start <= maxSpan;
+        if (canMerge) {
+          last.end = Math.max(last.end, it.end);
+          last.items.push(it);
+        } else {
+          ranges.push({ start: it.start, end: it.end, items: [it] });
+        }
+      }
+      return ranges;
+    }
+
+    /** 用固定数量的 worker 并发读取若干区间，返回与 ranges 同序的字节数组 */
+    async function readRangesWithConcurrency(file, ranges, concurrency = 4) {
+      const buffers = new Array(ranges.length);
+      let next = 0;
+      async function worker() {
+        for (;;) {
+          const idx = next++;
+          if (idx >= ranges.length) return;
+          const r = ranges[idx];
+          try {
+            buffers[idx] = new Uint8Array(await file.slice(r.start, r.end).arrayBuffer());
+          } catch (err) {
+            buffers[idx] = null;
+          }
+        }
+      }
+      const workers = [];
+      const n = Math.max(1, Math.min(concurrency, ranges.length || 1));
+      for (let i = 0; i < n; i++) workers.push(worker());
+      await Promise.all(workers);
+      return buffers;
+    }
+
+    /** 让出一次事件循环，保证进度文字能刷新、页面不假死 */
+    const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    async function extractTrackCues(file, track, generation) {
+      const total = track.sampleCount;
+      const timeScale = track.timescale || 1;
+      if (!total) return [];
+
+      const ranges = mergeReadRanges(track, file.size);
+      if (!ranges.length) return [];
+
+      const mergedBytes = ranges.reduce((s, r) => s + (r.end - r.start), 0);
+      subtitleStatus.textContent =
+        `正在读取 ${track.codec} 字幕：${total} 条 · 合并为 ${ranges.length} 段 · ` +
+        `${(mergedBytes / 1024).toFixed(0)} KB`;
+
+      const buffers = await readRangesWithConcurrency(file, ranges, 4);
+      if (generation !== mp4ParseGeneration) return [];
+
+      // 建立 "sample 序号 -> 该 sample 的字节切片" 索引
+      const sampleBytes = new Array(total);
+      for (let ri = 0; ri < ranges.length; ri++) {
+        const buf = buffers[ri];
+        if (!buf) continue;
+        const base = ranges[ri].start;
+        for (const it of ranges[ri].items) {
+          sampleBytes[it.i] = buf.subarray(it.start - base, it.end - base);
+        }
+      }
+
+      const cues = [];
+      for (let i = 0; i < total; i++) {
+        const bytes = sampleBytes[i];
+        if (bytes && bytes.length) {
+          const text = track.codec === 'tx3g'
+            ? decodeTx3gSample(bytes)
+            : decodeWvttSample(bytes);
+          if (text.trim()) {
+            const mediaStart = (track.dts[i] || 0) + (track.ctts[i] || 0);
+            const mediaEnd = mediaStart + (track.durations[i] || 0);
+            const start = mapMediaTimeToMovieSeconds(mediaStart, track.editInfo);
+            const endMapped = mapMediaTimeToMovieSeconds(mediaEnd, track.editInfo);
+            const end = Math.max(
+              endMapped,
+              start + Math.max(0.01, (track.durations[i] || 1) / timeScale)
+            );
+            cues.push({ start, end, text });
+          }
+        }
+        if ((i + 1) % 400 === 0) {
+          subtitleStatus.textContent = `正在提取 ${track.codec} 字幕… ${i + 1}/${total}`;
+          await yieldToUI();
+          if (generation !== mp4ParseGeneration) return [];
+        }
       }
       return cues.sort((a, b) => a.start - b.start);
     }
@@ -2473,7 +2687,7 @@
         const parsedTracks = [];
         for (const track of candidates) {
           if (generation !== mp4ParseGeneration) return;
-          const cues = await extractTrackCues(file, track);
+          const cues = await extractTrackCues(file, track, generation);
           parsedTracks.push({ ...track, cues });
         }
 
@@ -2503,18 +2717,17 @@
         syncEmbeddedSubtitleMenu();
         activeEmbeddedTrackId = null;
 
-        // 尝试恢复上次选中的内嵌字幕
-        if (embeddedRestoreTrackId != null && activeSubtitleSource !== 'external') {
-          const track = embeddedSubtitleTracks.find(t => String(t.id) === String(embeddedRestoreTrackId));
-          if (track) {
-            embeddedSubtitleSelect.value = String(track.id);
-            embeddedSubtitleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-          } else {
-            setSubtitleCues([], 'none', `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕，请选择。`);
-          }
+        // 决定用哪一条：
+        //   ① 有上次选中的记录且该轨仍存在 -> 恢复它
+        //   ② 否则自动选中第 1 条并立即开始显示（不再停在"请选择"）
+        if (activeSubtitleSource !== 'external') {
+          const restored = embeddedRestoreTrackId != null
+            ? embeddedSubtitleTracks.find(t => String(t.id) === String(embeddedRestoreTrackId))
+            : null;
+          const target = restored || embeddedSubtitleTracks[0];
           embeddedRestoreTrackId = null;
-        } else if (activeSubtitleSource !== 'external') {
-          setSubtitleCues([], 'none', `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕，请选择。`);
+          embeddedSubtitleSelect.value = String(target.id);
+          embeddedSubtitleSelect.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
           subtitleStatus.textContent = `发现 ${embeddedSubtitleTracks.length} 条内嵌文本字幕（当前使用外部字幕）`;
         }
