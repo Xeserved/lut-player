@@ -86,6 +86,18 @@
     background: #000;
   }
 
+  /* 不开 LUT 时用这块 2D canvas 输出：createImageBitmap(colorSpaceConversion:'none')
+     能拿到与 WebGL 完全一致的原始数值，但不需要 4K 纹理上传。 */
+  #canvas2d {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
+    background: #000;
+  }
+
   #subtitle-layer {
     position: absolute;
     bottom: 108px;
@@ -143,11 +155,13 @@
     pointer-events: none;
   }
 
+  /* 左上角竖排：上面一排按钮，下面是媒体信息 */
   .top-hud {
     top: 16px;
+    flex-direction: column;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
+    justify-content: flex-start;
+    gap: 8px;
   }
 
   .bottom-hud {
@@ -171,11 +185,42 @@
   .brand-block,
   .action-block,
   .control-bar,
-  .seek-shell,
+  .seek-inline,
   .settings-panel,
   .playlist-panel,
   .toast {
     pointer-events: auto;
+  }
+
+  /* 进度条不再单独一栏，直接并入控制栏 */
+  .seek-inline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* 移动端适配：顶栏按钮可横向滚动，进度条压缩，状态胶囊隐藏 */
+  @media (max-width: 720px) {
+    .top-hud { top: 8px; gap: 6px; }
+    .action-block {
+      gap: 6px;
+      padding: 6px 8px;
+      max-width: calc(100vw - 16px);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .action-block::-webkit-scrollbar { display: none; }
+    .seek-inline { gap: 6px; }
+    .seek-inline .time-display { min-width: 36px; font-size: 10px; }
+    .control-bar { gap: 6px; padding: 6px 8px; border-radius: 12px; }
+    .control-bar .status-pill { display: none; }
+  }
+
+  @media (max-width: 520px) {
+    .control-bar .volume-wrap { display: none; }
+    .brand-block { padding: 6px 10px; }
   }
 
   .brand-block {
@@ -436,8 +481,10 @@
 
   .settings-panel {
     position: absolute;
-    right: 18px;
-    top: 86px;
+    left: 18px;
+    right: auto;
+    /* 顶栏改到左上角后是两行（按钮行 + 媒体信息行），面板要避开它们 */
+    top: 132px;
     width: min(410px, calc(100vw - 36px));
     padding: 14px;
     border-radius: 17px;
@@ -704,19 +751,22 @@
     font-variant-numeric: tabular-nums;
   }
 
-  #subtitle-size {
+  #subtitle-size,
+  #render-scale {
     width: 100%;
     height: 20px;
     cursor: pointer;
   }
 
-  #subtitle-size::-webkit-slider-runnable-track {
+  #subtitle-size::-webkit-slider-runnable-track,
+  #render-scale::-webkit-slider-runnable-track {
     height: 3px;
     background: rgba(255,255,255,0.24);
     border-radius: 999px;
   }
 
-  #subtitle-size::-webkit-slider-thumb {
+  #subtitle-size::-webkit-slider-thumb,
+  #render-scale::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 12px;
     height: 12px;
@@ -725,13 +775,15 @@
     background: #fff;
   }
 
-  #subtitle-size::-moz-range-track {
+  #subtitle-size::-moz-range-track,
+  #render-scale::-moz-range-track {
     height: 3px;
     background: rgba(255,255,255,0.24);
     border-radius: 999px;
   }
 
-  #subtitle-size::-moz-range-thumb {
+  #subtitle-size::-moz-range-thumb,
+  #render-scale::-moz-range-thumb {
     width: 12px;
     height: 12px;
     border: 0;
@@ -783,13 +835,14 @@
   .playlist-panel {
     position: absolute;
     top: 16px;
-    right: 18px;
+    left: 18px;
+    right: auto;
     bottom: 16px;
     width: min(360px, calc(100vw - 36px));
     padding: 14px;
     border-radius: 18px;
     opacity: 0;
-    transform: translateX(18px);
+    transform: translateX(-18px);
     visibility: hidden;
     transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
     display: flex;
@@ -989,11 +1042,11 @@
     .status-pill { font-size: 10px; padding: 0 7px; min-height: 26px; gap: 5px; }
     .status-dot { width: 5px; height: 5px; }
 
-    /* 设置面板：居中且限制高度，避免溢出 */
+    /* 设置面板：左右贴合且限制高度，避免溢出 */
     .settings-panel {
       left: 8px;
       right: 8px;
-      top: 58px;
+      top: 96px;
       width: auto;
       padding: 12px;
       border-radius: 14px;
@@ -1052,20 +1105,11 @@
   <div id="player-container">
     <video id="video" crossorigin="anonymous" playsinline style="display:none;"></video>
     <canvas id="glcanvas"></canvas>
+    <canvas id="canvas2d"></canvas>
     <div id="subtitle-layer"></div>
 
     <div id="ui-overlay" class="ui-overlay">
       <div class="hud top-hud">
-        <div class="brand-block glass" aria-label="播放器信息">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="m9 4 2 16M13 4l2 16M5 9h14M5 15h14"/></svg>
-          </div>
-          <div class="brand-copy">
-            <div class="brand-title">MovieResolve Player</div>
-            <div id="current-title" class="media-title">选择一个视频开始播放</div>
-          </div>
-        </div>
-
         <div class="action-block glass">
           <button id="btn-open-video" class="primary-btn" type="button" title="添加视频（可多选）">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
@@ -1075,9 +1119,24 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h11M8 12h11M8 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
             <span>播放列表</span>
           </button>
+          <button id="btn-hide-ui" class="icon-btn text-btn" type="button" title="隐藏控制界面" aria-label="隐藏控制界面">
+            <span>隐藏</span>
+          </button>
+          <button id="btn-enter-fullscreen" class="icon-btn" type="button" title="进入全屏" aria-label="进入全屏">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M20 16v4h-4"/></svg>
+          </button>
+          <button id="btn-exit-fullscreen" class="icon-btn" type="button" title="退出全屏" aria-label="退出全屏" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M20 15h-5v5"/></svg>
+          </button>
           <button id="btn-settings" class="icon-btn text-btn" type="button" title="字幕与 LUT 设置" aria-label="字幕与 LUT 设置">
             <span>设置</span>
           </button>
+        </div>
+
+        <div class="brand-block glass" aria-label="媒体信息">
+          <div class="brand-copy">
+            <div id="current-title" class="media-title">选择一个视频开始播放</div>
+          </div>
         </div>
       </div>
 
@@ -1161,16 +1220,37 @@
               <span class="switch-track"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-label">渲染分辨率</div>
+            <div class="range-line">
+              <input type="range" id="render-scale" min="0.10" max="1.00" step="0.05" value="1.00" aria-label="渲染分辨率倍率">
+              <span id="render-scale-value" class="subtitle-size-value">1.00×</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">帧率</div>
+            <div class="embedded-subtitle-picker" id="fps-picker">
+              <button id="fps-trigger" class="subtitle-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="帧率上限">
+                <span id="fps-label">跟随视频</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div id="fps-menu" class="embedded-subtitle-menu" role="listbox" aria-label="帧率上限"></div>
+              <!-- 隐藏的原生 select 只作为数据模型：getFpsCap() / 状态存取 / change 事件都还用得上它 -->
+              <select id="render-fps" aria-hidden="true" style="display:none;">
+                <option value="auto" selected>跟随视频</option>
+                <option value="24">24 fps</option>
+                <option value="30">30 fps</option>
+                <option value="60">60 fps</option>
+                <option value="120">120 fps</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="hud bottom-hud">
-        <div class="seek-shell glass">
-          <span id="txt-current-time" class="time-display">00:00</span>
-          <input type="range" id="seek-bar" class="progress-bar" value="0" min="0" max="100" step="0.1" aria-label="播放进度">
-          <span id="txt-duration" class="time-display">00:00</span>
-        </div>
-
         <div class="control-bar glass">
           <div class="control-left">
             <button id="btn-prev" class="icon-btn" type="button" title="上一个" aria-label="上一个视频">
@@ -1189,17 +1269,14 @@
             </div>
           </div>
 
+          <div class="seek-inline">
+            <span id="txt-current-time" class="time-display">00:00</span>
+            <input type="range" id="seek-bar" class="progress-bar" value="0" min="0" max="100" step="0.1" aria-label="播放进度">
+            <span id="txt-duration" class="time-display">00:00</span>
+          </div>
+
           <div class="control-right">
             <div id="player-status" class="status-pill"><span class="status-dot"></span><span>就绪</span></div>
-            <button id="btn-hide-ui" class="icon-btn text-btn" type="button" title="隐藏控制界面" aria-label="隐藏控制界面">
-              <span>隐藏</span>
-            </button>
-            <button id="btn-enter-fullscreen" class="icon-btn" type="button" title="进入全屏" aria-label="进入全屏">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M20 16v4h-4"/></svg>
-            </button>
-            <button id="btn-exit-fullscreen" class="icon-btn" type="button" title="退出全屏" aria-label="退出全屏" style="display:none;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M20 15h-5v5"/></svg>
-            </button>
           </div>
         </div>
       </div>
@@ -1228,6 +1305,9 @@
     const subtitleSizeValue = document.getElementById('subtitle-size-value');
     const inputLut = document.getElementById('input-lut');
     const chkLut = document.getElementById('chk-lut');
+    const renderScaleInput = document.getElementById('render-scale');
+    const renderScaleValue = document.getElementById('render-scale-value');
+    const renderFpsSelect = document.getElementById('render-fps');
 
     const btnPlay = document.getElementById('btn-play');
     const playIcon = document.getElementById('play-icon');
@@ -1402,6 +1482,8 @@
           v: 1,
           subtitleSize: Number(subtitleSizeInput.value) || DEFAULT_SUBTITLE_SIZE,
           lutEnabled: chkLut.checked,
+          renderScale: getRenderScale(),
+          renderFps: renderFpsSelect ? String(renderFpsSelect.value) : 'auto',
           lutFileName: currentLutFileName || '',
           activeSubtitleSource: activeSubtitleSource,
           embeddedTrackId: activeEmbeddedTrackId,
@@ -1474,6 +1556,18 @@
         if (typeof state.lutEnabled === 'boolean') {
           chkLut.checked = state.lutEnabled;
         }
+
+        // 渲染分辨率倍率
+        if (typeof state.renderScale === 'number') {
+          setRenderScale(state.renderScale);
+        }
+
+        // 帧率
+        if (typeof state.renderFps === 'string' && renderFpsSelect) {
+          const has = Array.from(renderFpsSelect.options).some(o => o.value === state.renderFps);
+          if (has) renderFpsSelect.value = state.renderFps;
+        }
+        syncFpsMenu();
 
         // 播放列表元数据
         if (Array.isArray(state.playlistMeta) && state.playlistMeta.length) {
@@ -1723,32 +1817,340 @@
       gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
 
       isLutLoaded = true;
+      syncRenderLayers();   // 有 LUT 可用了 → 可能要从 2D 切到 WebGL 路径
       console.log(`LUT 载入成功: 维度 ${size}x${size}x${size}`);
     }
 
     // ==========================================
     // 渲染循环
+    //
+    // 画面始终经过 WebGL 的 canvas 输出（不直接显示 <video>），
+    // 因为 <video> 一旦识别到 HDR 元数据会自动做色调映射，画面就不再"原始"了。
+    //
+    // 性能控制点有两个，都在设置面板里：
+    //   ① 渲染分辨率倍率：0.10 ~ 1.00。低于 1.00 时先用 createImageBitmap 缩好再上传，
+    //      所以「纹理上传量」和「着色像素数」都按倍率的平方下降。
+    //   ② 帧率：默认「跟随视频」，用 requestVideoFrameCallback 自动对齐视频真实帧率
+    //      （24fps 视频只上传 24 次/秒），不再跟着显示器刷新率空转。
     // ==========================================
-    function render() {
-      if (video.readyState >= video.HAVE_CURRENT_DATA) {
-        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          gl.viewport(0, 0, canvas.width, canvas.height);
+    let lastUploadedTime = -1;
+    let lastUploadAt = 0;
+    let forceRedraw = true;
+    let videoFramePending = true;
+    let rvfcActive = false;
+
+    /** 渲染倍率 0.10 ~ 1.00 */
+    function getRenderScale() {
+      const raw = renderScaleInput ? parseFloat(renderScaleInput.value) : 1;
+      if (!Number.isFinite(raw)) return 1;
+      return Math.min(1, Math.max(0.1, raw));
+    }
+
+    /** 上传帧率上限；0 表示「跟随视频真实帧率」 */
+    function getFpsCap() {
+      const raw = renderFpsSelect ? String(renderFpsSelect.value || 'auto') : 'auto';
+      if (raw === 'auto') return 0;
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    /** 设置渲染倍率并同步界面文字 */
+    function setRenderScale(v) {
+      const s = Math.min(1, Math.max(0.1, Number(v) || 1));
+      if (renderScaleInput) renderScaleInput.value = String(s);
+      if (renderScaleValue) renderScaleValue.textContent = `${s.toFixed(2)}×`;
+      forceRedraw = true;
+    }
+
+    // ---------------------------------------------------------------
+    // 帧率下拉：完全复用「内嵌字幕」那套 UI（.subtitle-select-trigger /
+    // .embedded-subtitle-menu / .subtitle-option），所以展开后的样式一致。
+    // 原生 <select> 只是隐藏的数据模型，保证 getFpsCap()、状态存取、
+    // change 事件这些既有逻辑一行都不用改。
+    // ---------------------------------------------------------------
+    const fpsPicker = document.getElementById('fps-picker');
+    const fpsTrigger = document.getElementById('fps-trigger');
+    const fpsLabel = document.getElementById('fps-label');
+    const fpsMenu = document.getElementById('fps-menu');
+
+    function closeFpsMenu() {
+      if (!fpsMenu || !fpsTrigger) return;
+      fpsMenu.classList.remove('open');
+      fpsTrigger.classList.remove('open');
+      fpsTrigger.setAttribute('aria-expanded', 'false');
+    }
+
+    function syncFpsMenu() {
+      if (!fpsMenu || !fpsTrigger || !fpsLabel || !renderFpsSelect) return;
+      const sel = renderFpsSelect.options[renderFpsSelect.selectedIndex];
+      fpsLabel.textContent = sel ? sel.textContent : '跟随视频';
+      fpsMenu.innerHTML = '';
+      for (const opt of renderFpsSelect.options) {
+        const active = opt.value === renderFpsSelect.value;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'subtitle-option' + (active ? ' active' : '');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', active ? 'true' : 'false');
+
+        const txt = document.createElement('span');
+        txt.className = 'subtitle-option-text';
+        txt.textContent = opt.textContent;
+        item.appendChild(txt);
+
+        if (active) {
+          const mark = document.createElement('span');
+          mark.className = 'subtitle-option-mark';
+          mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m5 13 4 4 10-10"/></svg>';
+          item.appendChild(mark);
         }
 
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-
-        gl.uniform1i(gl.getUniformLocation(program, 'u_lutEnabled'), chkLut.checked && isLutLoaded);
-        gl.uniform1f(gl.getUniformLocation(program, 'u_lutSize'), lutSize);
-
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-        updateSubtitles();
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          renderFpsSelect.value = opt.value;
+          renderFpsSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          closeFpsMenu();
+          syncFpsMenu();
+        });
+        fpsMenu.appendChild(item);
       }
+    }
+
+    function toggleFpsMenu() {
+      if (!fpsMenu || !fpsTrigger) return;
+      const willOpen = !fpsMenu.classList.contains('open');
+      if (willOpen) {
+        syncFpsMenu();
+        fpsMenu.classList.add('open');
+        fpsTrigger.classList.add('open');
+        fpsTrigger.setAttribute('aria-expanded', 'true');
+      } else {
+        closeFpsMenu();
+      }
+    }
+
+    if (fpsTrigger) {
+      fpsTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFpsMenu();
+      });
+      fpsMenu.addEventListener('click', (e) => e.stopPropagation());
+      document.addEventListener('click', (e) => {
+        if (fpsPicker && !fpsPicker.contains(e.target)) closeFpsMenu();
+      });
+      syncFpsMenu();
+    }
+
+    /**
+     * 用 requestVideoFrameCallback 精确跟踪「真的出现了一帧新画面」。
+     * 它每显示一帧回调一次，所以上传次数天然等于视频帧数，
+     * 不需要我们去猜视频是多少 fps。
+     */
+    function startVideoFrameCallback() {
+      if (typeof video.requestVideoFrameCallback !== 'function') return;
+      rvfcActive = true;
+      const onFrame = () => {
+        videoFramePending = true;
+        video.requestVideoFrameCallback(onFrame);
+      };
+      video.requestVideoFrameCallback(onFrame);
+    }
+
+    /** 画布后备缓冲 = 视频尺寸 × 倍率 */
+    function sizeCanvasToVideo() {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return;
+      const s = getRenderScale();
+      const w = Math.max(2, Math.round(vw * s));
+      const h = Math.max(2, Math.round(vh * s));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        forceRedraw = true;
+      }
+    }
+
+    // 缩放上传
+    //
+    // ⚠ 上一版这里是错的：把 video 画进 2D canvas（drawImage）再上传，
+    //   而 drawImage 会走浏览器的色彩管理 —— HDR 画面被色调映射成 SDR，
+    //   画面就"变成 video 标签那种色彩"了，原始 PQ 丢失。
+    //
+    //   正确做法是用 createImageBitmap 并显式设 colorSpaceConversion:'none'，
+    //   这样缩放时不做任何色彩转换，画面保持原始。
+    let bitmapBusy = false;
+    let bitmapUnavailable = false;
+
+    function drawQuad() {
+      gl.uniform1i(gl.getUniformLocation(program, 'u_lutEnabled'), chkLut.checked && isLutLoaded);
+      gl.uniform1f(gl.getUniformLocation(program, 'u_lutSize'), lutSize);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function uploadDirect() {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+      drawQuad();
+    }
+
+    function uploadScaled(w, h) {
+      bitmapBusy = true;
+      createImageBitmap(video, {
+        resizeWidth: w,
+        resizeHeight: h,
+        resizeQuality: 'low',
+        colorSpaceConversion: 'none',   // ★ 保住原始画面：不做 HDR→SDR 转换
+        premultiplyAlpha: 'none'
+      }).then(bmp => {
+        try {
+          if (gl) {
+            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+            drawQuad();
+          }
+        } finally {
+          if (bmp && typeof bmp.close === 'function') bmp.close();
+        }
+      }).catch(err => {
+        bitmapUnavailable = true;
+        forceRedraw = true;   // 下一帧退回原始路径补画
+        console.warn('createImageBitmap 缩放不可用，回退到原始分辨率上传', err);
+      }).finally(() => {
+        bitmapBusy = false;
+      });
+    }
+
+    function uploadCurrentFrame() {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const s = getRenderScale();
+      const wantScale = s < 0.99
+        && !bitmapUnavailable
+        && typeof createImageBitmap === 'function'
+        && vw > 0 && vh > 0;
+
+      if (!wantScale) {
+        uploadDirect();
+        return;
+      }
+      // 上一张还在异步缩放：直接跳过这一帧（画面上仍是上一帧），
+      // 不要再退回全分辨率上传，否则等于把省下来的又还回去。
+      if (bitmapBusy) return;
+
+      uploadScaled(Math.max(2, Math.round(vw * s)), Math.max(2, Math.round(vh * s)));
+    }
+
+    // ===============================================================
+    // 两条渲染路径
+    //
+    //   不开 LUT → 2D canvas + createImageBitmap({colorSpaceConversion:'none'})
+    //              实测输出与 WebGL 一致（都是原始 PQ 数值），
+    //              但数据不需要走 4K RGBA 纹理上传，缩放也在生成位图时顺便完成。
+    //   开 LUT   → 必须走 WebGL：3D LUT 只能在着色器里做，
+    //              CPU 逐像素查表在 1080p 上都不可能实时。
+    // ===============================================================
+    let canvas2d = document.getElementById('canvas2d');
+    let ctx2d = canvas2d ? canvas2d.getContext('2d', { alpha: false }) : null;
+    let lastLayerGl = null;
+
+    /** 当前是否必须用 WebGL（只有开了 LUT 才需要） */
+    function useWebglPath() {
+      return chkLut.checked && isLutLoaded;
+    }
+
+    function syncRenderLayers() {
+      const useGl = useWebglPath();
+      if (lastLayerGl === useGl) return;
+      lastLayerGl = useGl;
+      canvas.style.display = useGl ? 'block' : 'none';
+      if (canvas2d) canvas2d.style.display = useGl ? 'none' : 'block';
+      forceRedraw = true;
+    }
+
+    /** 不开 LUT 时的绘制：位图无色彩转换 → drawImage 到 2D canvas */
+    function drawFrame2d() {
+      if (!canvas2d || !ctx2d) return;
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (!vw || !vh) return;
+      const s = getRenderScale();
+      const w = Math.max(2, Math.round(vw * s));
+      const h = Math.max(2, Math.round(vh * s));
+      if (canvas2d.width !== w || canvas2d.height !== h) {
+        canvas2d.width = w;
+        canvas2d.height = h;
+      }
+      // 上一张还在异步生成：跳过这一帧（画面停在上一帧），避免任务堆积
+      if (bitmapBusy) return;
+      bitmapBusy = true;
+      createImageBitmap(video, {
+        colorSpaceConversion: 'none',   // ★ 关键：不做任何色彩转换，保住原始画面
+        premultiplyAlpha: 'none',
+        resizeWidth: w,
+        resizeHeight: h,
+        resizeQuality: 'low'
+      }).then(bmp => {
+        try {
+          ctx2d.drawImage(bmp, 0, 0, w, h);
+        } finally {
+          if (bmp && typeof bmp.close === 'function') bmp.close();
+        }
+      }).catch(err => {
+        console.warn('createImageBitmap 失败', err);
+      }).finally(() => {
+        bitmapBusy = false;
+      });
+    }
+
+    function render(now) {
+      const ts = Number.isFinite(now) ? now : performance.now();
+
+      if (video.readyState >= video.HAVE_CURRENT_DATA) {
+        syncRenderLayers();
+        const useGl = useWebglPath();
+        if (useGl) sizeCanvasToVideo();
+
+        const cap = getFpsCap();
+        let due;
+        if (cap > 0) {
+          // 用户指定了上限：按最小间隔判断
+          due = forceRedraw || (ts - lastUploadAt) >= (1000 / cap) - 1.5;
+        } else if (rvfcActive) {
+          // 跟随视频真实帧率
+          due = forceRedraw || videoFramePending;
+        } else {
+          // 兜底：用 currentTime 变化判断有没有新帧
+          due = forceRedraw || video.currentTime !== lastUploadedTime;
+        }
+
+        if (due) {
+          forceRedraw = false;
+          videoFramePending = false;
+          lastUploadAt = ts;
+          lastUploadedTime = video.currentTime;
+
+          if (useGl) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            // uploadCurrentFrame() 内部完成"上传 + 绘制"。
+            // 缩放路径是异步的（createImageBitmap 返回 Promise），绘制在回调里做。
+            uploadCurrentFrame();
+          } else {
+            drawFrame2d();
+          }
+        }
+      }
+
+      updateSubtitles();
       requestAnimationFrame(render);
     }
+
+    // 这些情况下 currentTime 可能不变，但画面需要重画一次
+    window.addEventListener('resize', () => { forceRedraw = true; });
+    ['play', 'pause', 'seeking', 'seeked', 'loadeddata', 'loadedmetadata'].forEach(ev => {
+      video.addEventListener(ev, () => { forceRedraw = true; });
+    });
 
     // ==========================================
     // UI 显示与隐藏
@@ -3233,8 +3635,27 @@
 
     chkLut.addEventListener('change', () => {
       showToast(chkLut.checked ? 'LUT 已开启' : 'LUT 已关闭');
+      forceRedraw = true;
+      syncRenderLayers();   // 关 LUT → 切回 2D 位图路径；开 → 切到 WebGL
       saveStateNow();
     });
+
+    if (renderScaleInput) {
+      renderScaleInput.addEventListener('input', () => {
+        setRenderScale(renderScaleInput.value);
+        saveStateThrottled();
+      });
+      renderScaleInput.addEventListener('change', () => saveStateNow());
+    }
+
+    if (renderFpsSelect) {
+      renderFpsSelect.addEventListener('change', () => {
+        forceRedraw = true;
+        lastUploadAt = 0;
+        syncFpsMenu();
+        saveStateNow();
+      });
+    }
 
     // ==========================================
     // 键盘快捷键
@@ -3400,9 +3821,11 @@
     // 初始化
     // ==========================================
     initWebGL();
+    startVideoFrameCallback();   // 让上传次数自动对齐视频真实帧率
     requestAnimationFrame(render);
 
     setSubtitleFontSize(DEFAULT_SUBTITLE_SIZE);
+    setRenderScale(1);           // 默认 1.00×（视频原始分辨率）；本地状态恢复时会覆盖
     setPlayIcon(false);
 
     restoreState().then(() => {
